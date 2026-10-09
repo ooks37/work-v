@@ -919,7 +919,7 @@
   <script>
     const { createApp, ref, reactive, onMounted, onUnmounted } = Vue;
 
-    createApp({
+    const app = createApp({
       setup() {
         const token = ref(localStorage.getItem('workv_token') || '');
         const isLoggedIn = ref(!!token.value);
@@ -1377,8 +1377,8 @@
           isLoggedIn, currentTab, isRefreshing, toasts, addToast, removeToast,
           showLoginPassword, loginForm, loginLoading, lockRemaining, handleLogin, logout,
           dashboard, nodes, users, fetchData,
-          showAddNodeModal, nodeForm, createNode, syncNode, deleteNode,
-          selectedNodeForInstall, openInstallModal, getInstallCommand,
+          showAddNodeModal, showAdvancedNodeFields, nodeForm, createNode, syncNode, deleteNode,
+          selectedNodeForInstall, openInstallModal, getAdaptedInstallCommand, commandTab, customNatPort,
           showAddUserModal, userForm, createUser, resetUserTraffic, deleteUser,
           selectedUserForSub, openSubModal, getSubURL,
           qrModal, openQr,
