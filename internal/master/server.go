@@ -1,6 +1,7 @@
 package master
 
 import (
+	_ "embed"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+//go:embed install.sh
+var defaultInstallScript string
 
 // SetupRouter 注册 Master 全部路由规则
 func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
@@ -34,26 +38,46 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 	// 2. 外部多端自适应订阅接口
 	r.GET("/sub/:token", sub.HandleSubscription)
 
-	// 3. 节点一键安装脚本动态分发
+	// 3. 节点一键智能安装脚本动态分发
 	r.GET("/install.sh", handleAgentInstallScript)
+	r.GET("/api/v1/install.sh", handleAgentInstallScript)
 
-	// 4. 节点 Agent 预编译产物与依赖分发
+	// 4. 二进制产物、CLI 工具与安装脚本分发
 	r.GET("/download/:filename", func(c *gin.Context) {
 		filename := c.Param("filename")
 		if strings.Contains(filename, "..") || strings.Contains(filename, "/") {
 			c.String(http.StatusBadRequest, "Invalid filename")
 			return
 		}
+		if filename == "install.sh" {
+			handleAgentInstallScript(c)
+			return
+		}
 		candidates := []string{
 			filepath.Join(".", filename),
 			filepath.Join("/opt/work-v-master", filename),
 		}
-		if strings.HasPrefix(filename, "agent-") {
+		if strings.HasPrefix(filename, "agent-") || strings.HasPrefix(filename, "work-v-agent") {
 			candidates = append(candidates,
-				filepath.Join(".", "work-v-agent"),
-				filepath.Join(".", "work-v-agent-linux"),
 				filepath.Join("/opt/work-v-master", "work-v-agent"),
 				filepath.Join("/opt/work-v-master", "work-v-agent-linux"),
+				filepath.Join(".", "work-v-agent"),
+				filepath.Join(".", "work-v-agent-linux"),
+			)
+		}
+		if strings.HasPrefix(filename, "master-") || strings.HasPrefix(filename, "work-v-master") {
+			candidates = append(candidates,
+				filepath.Join("/opt/work-v-master", "work-v-master"),
+				filepath.Join("/opt/work-v-master", "work-v-master-linux"),
+				filepath.Join(".", "work-v-master"),
+				filepath.Join(".", "work-v-master-linux"),
+			)
+		}
+		if filename == "work-v" || filename == "bt-v" {
+			candidates = append(candidates,
+				filepath.Join("/opt/work-v-master", "scripts", "work-v"),
+				filepath.Join(".", "scripts", "work-v"),
+				filepath.Join("/usr/local/bin", "work-v"),
 			)
 		}
 		for _, p := range candidates {
@@ -125,7 +149,7 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 	return r
 }
 
-// handleAgentInstallScript 动态生成并返回节点安装脚本
+// handleAgentInstallScript 动态生成并返回主副节点智能自适应安装脚本
 func handleAgentInstallScript(c *gin.Context) {
 	scheme := "http"
 	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
@@ -134,96 +158,25 @@ func handleAgentInstallScript(c *gin.Context) {
 	host := c.Request.Host
 	masterURL := fmt.Sprintf("%s://%s", scheme, host)
 
-	script := fmt.Sprintf(`#!/usr/bin/env bash
-# ==========================================================
-# Work-V Agent 一键安装与纳管脚本
-# ==========================================================
-set -e
+	// 优先从本地/安装目录读取最新 install.sh，若无则使用编译期内置嵌入的 defaultInstallScript
+	script := defaultInstallScript
+	candidates := []string{
+		"scripts/install.sh",
+		"/opt/work-v-master/scripts/install.sh",
+		"install.sh",
+	}
+	for _, p := range candidates {
+		if content, err := os.ReadFile(p); err == nil && len(content) > 0 {
+			script = string(content)
+			break
+		}
+	}
 
-SERVER="%s"
-TOKEN=""
-
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --token) TOKEN="$2"; shift 2 ;;
-    --server) SERVER="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-
-if [ -z "$TOKEN" ]; then
-  echo "❌ 错误: 必须指定节点 Token (--token <TOKEN>)"
-  exit 1
-fi
-
-echo "🚀 [Work-V] 开始部署 Agent 到本机..."
-echo "  主控地址: $SERVER"
-echo "  节点令牌: $TOKEN"
-
-ARCH=$(uname -m)
-case "$ARCH" in
-  x86_64) AGENT_ARCH="amd64" ;;
-  aarch64|arm64) AGENT_ARCH="arm64" ;;
-  *) echo "❌ 不支持的系统架构: $ARCH"; exit 1 ;;
-esac
-
-INSTALL_DIR="/opt/work-v-agent"
-mkdir -p "$INSTALL_DIR"
-
-echo "📦 下载并更新 Agent 二进制..."
-# 尝试从主控拉取对应架构的 agent 二进制
-curl -fsSL "$SERVER/download/agent-$AGENT_ARCH" -o "$INSTALL_DIR/work-v-agent" || {
-  echo "⚠️ 主控未内置预编译包，使用通用 release 或本地构建包"
-}
-chmod +x "$INSTALL_DIR/work-v-agent" 2>/dev/null || true
-
-# 写入配置文件
-cat > "$INSTALL_DIR/config.json" <<EOF
-{
-  "server": "$SERVER",
-  "token": "$TOKEN",
-  "singbox_path": "/usr/local/bin/sing-box"
-}
-EOF
-
-# 检查/下载 sing-box 核心
-if ! command -v sing-box &> /dev/null && [ ! -f "/usr/local/bin/sing-box" ]; then
-  echo "⚡ 正在下载 Sing-box 官方核心..."
-  SB_VER="1.10.7"
-  SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${AGENT_ARCH}.tar.gz"
-  curl -fsSL "$SB_URL" -o /tmp/sb.tar.gz
-  tar -zxvf /tmp/sb.tar.gz -C /tmp
-  mv /tmp/sing-box-*/sing-box /usr/local/bin/
-  chmod +x /usr/local/bin/sing-box
-  rm -rf /tmp/sb*
-fi
-
-# 安装 systemd 守护服务
-cat > /etc/systemd/system/work-v-agent.service <<EOF
-[Unit]
-Description=Work-V Agent Daemon
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/work-v-agent --server $SERVER --token $TOKEN
-Restart=always
-RestartSec=5
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable work-v-agent
-systemctl restart work-v-agent
-
-echo "✅ [Work-V Agent] 部署并自启成功！已开始向主控反向握手！"
-`, masterURL)
+	// 动态注入主控端地址
+	script = strings.Replace(script, `DEFAULT_SERVER="https://qweqwe.shangxinci.com"`, fmt.Sprintf(`DEFAULT_SERVER="%s"`, masterURL), 1)
 
 	c.Header("Content-Type", "text/plain; charset=utf-8")
+	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 	c.String(http.StatusOK, script)
 }
+

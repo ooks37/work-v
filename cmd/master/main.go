@@ -52,7 +52,7 @@ func main() {
 		fmt.Println("         Work-V 控制台安全入口与凭据信息          ")
 		fmt.Println("==================================================")
 		fmt.Printf("• 安全入口路径: %s\n", safePath)
-		fmt.Printf("• 外网域名入口: http://qweqwe.shangxinci.com%s\n", safePath)
+		fmt.Printf("• 外网域名入口: https://qweqwe.shangxinci.com%s\n", safePath)
 		fmt.Printf("• 默认管理账号: %s\n", admin.Username)
 		fmt.Println("• 如需修改入口: work-v-master -set-entry /new_path")
 		fmt.Println("• 如需重置密码: work-v-master -reset-admin")
