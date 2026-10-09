@@ -4,28 +4,35 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Work-V 控制台 - 极简分布式代理中枢</title>
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Tailwind CSS 本地离线优先加载 (零外网依赖，极速秒开防白屏) -->
+  <script src="/tailwind.js"></script>
   <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#f0fdf4',
-              500: '#10b981',
-              600: '#059669',
-              700: '#047857'
-            },
-            surface: {
-              dark: '#0f172a',
-              card: '#1e293b',
-              border: '#334155'
+    if (!window.tailwind) {
+      document.write('<script src="https://cdn.tailwindcss.com/3.4.17"><\/script>');
+    }
+  </script>
+  <script>
+    if (window.tailwind) {
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: '#f0fdf4',
+                500: '#10b981',
+                600: '#059669',
+                700: '#047857'
+              },
+              surface: {
+                dark: '#0f172a',
+                card: '#1e293b',
+                border: '#334155'
+              }
             }
           }
         }
-      }
+      };
     }
   </script>
   <!-- Vue 3 本地直接加载 (内嵌无外网依赖，告别白屏) -->
@@ -36,9 +43,8 @@
     }
   </script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
     body {
-      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
     .mono {
       font-family: 'JetBrains Mono', monospace;
@@ -69,7 +75,7 @@
       <transition-group enter-active-class="transform ease-out duration-300 transition" enter-from-class="translate-y-2 opacity-0 sm:translate-y-0 sm:translate-x-2" enter-to-class="translate-y-0 opacity-100 sm:translate-x-0" leave-active-class="transition ease-in duration-200" leave-from-class="opacity-100" leave-to-class="opacity-0">
         <div v-for="t in toasts" :key="t.id" :class="t.type === 'error' ? 'bg-red-500/90 border-red-400' : 'bg-emerald-600/90 border-emerald-400'" class="pointer-events-auto px-4 py-3 rounded-xl shadow-2xl border text-white text-sm font-medium flex items-center justify-between gap-3">
           <span>{{ t.message }}</span>
-          <button @click="removeToast(t.id)" class="text-white/80 hover:text-white">&times;</button>
+          <button @click="removeToast(t.id)" class="text-white/80 hover:text-white">✕</button>
         </div>
       </transition-group>
     </div>
@@ -332,7 +338,7 @@
                     <span>⚡ 复制纳管命令</span>
                   </button>
                   <button @click="openShareModal(node)" class="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 border border-cyan-500/20 transition active:scale-95">
-                    <span>📱 协议分享 & 二维码</span>
+                    <span>📱 协议分享 与 二维码</span>
                   </button>
                   <button @click="openInstallModal(node)" class="text-slate-400 hover:text-white font-medium flex items-center gap-1 transition">
                     <span>模式</span>
@@ -432,7 +438,7 @@
             </h3>
             <p class="text-xs text-slate-400">无需预先查询公网 IP，节点首次连接时自动探测并回填</p>
           </div>
-          <button @click="showAddNodeModal = false" class="text-slate-400 hover:text-white">&times;</button>
+          <button @click="showAddNodeModal = false" class="text-slate-400 hover:text-white">✕</button>
         </div>
 
         <form @submit.prevent="createNode" class="space-y-4 text-sm">
@@ -506,7 +512,7 @@
             </h3>
             <p class="text-xs text-slate-400">将命令粘贴至目标服务器终端执行，脚本将自动完成全套优化与接入</p>
           </div>
-          <button @click="selectedNodeForInstall = null" class="text-slate-400 hover:text-white">&times;</button>
+          <button @click="selectedNodeForInstall = null" class="text-slate-400 hover:text-white">✕</button>
         </div>
 
         <!-- 模式切换 Tabs -->
@@ -582,7 +588,7 @@
             <h3 class="text-lg font-bold text-white">多端自适应订阅链接</h3>
             <p class="text-xs text-slate-400">用户: {{ selectedUserForSub.username }}</p>
           </div>
-          <button @click="selectedUserForSub = null" class="text-slate-400 hover:text-white">&times;</button>
+          <button @click="selectedUserForSub = null" class="text-slate-400 hover:text-white">✕</button>
         </div>
 
         <div class="space-y-3 mb-6">
@@ -654,7 +660,7 @@
       <div class="glass-panel max-w-sm w-full p-6 rounded-3xl border border-slate-800 shadow-2xl text-center">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-base font-bold text-white">{{ qrModal.title }}</h3>
-          <button @click="qrModal.show = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+          <button @click="qrModal.show = false" class="text-slate-400 hover:text-white text-lg">✕</button>
         </div>
         <div class="bg-white p-3 rounded-2xl inline-block shadow-2xl my-2">
           <img :src="'/api/v1/qrcode?text=' + encodeURIComponent(qrModal.url)" alt="QR Code" class="w-52 h-52 block rounded-lg">
@@ -698,7 +704,7 @@
             </h3>
             <p class="text-xs text-slate-400 mt-1">未授权访问将拦截并提示，只有通过专属安全入口才可登录</p>
           </div>
-          <button @click="showSafeModal = false" class="text-slate-400 hover:text-white">&times;</button>
+          <button @click="showSafeModal = false" class="text-slate-400 hover:text-white">✕</button>
         </div>
 
         <div class="space-y-4 text-sm">
@@ -739,7 +745,7 @@
             </h3>
             <p class="text-xs text-slate-400 mt-1">支持 5 大顶级防封协议 · 手机小火箭 / Sing-box / v2rayNG / Hiddify 扫码直连</p>
           </div>
-          <button @click="shareModal.show = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+          <button @click="shareModal.show = false" class="text-slate-400 hover:text-white text-lg">✕</button>
         </div>
 
         <div v-if="shareModal.loading" class="py-12 text-center text-slate-400">
@@ -791,7 +797,7 @@
             </h3>
             <p class="text-xs text-slate-400 mt-1">检测 SagerNet/sing-box 最新 Release 并一键升级</p>
           </div>
-          <button @click="showSingboxModal = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+          <button @click="showSingboxModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
         </div>
 
         <div class="py-4 space-y-4 text-sm">
@@ -839,7 +845,7 @@
             </h3>
             <p class="text-xs text-slate-400 mt-1">实时扫描 Linux 内核监听端口 (ss -lntup) 与防封安全组</p>
           </div>
-          <button @click="showPortsModal = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+          <button @click="showPortsModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
         </div>
 
         <div class="flex-1 overflow-y-auto py-4 space-y-4">
@@ -892,7 +898,7 @@
             </h3>
             <p class="text-xs text-slate-400 mt-1">一键生成服务器环境、网络、内核及节点运行健康度报告</p>
           </div>
-          <button @click="showDiagModal = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+          <button @click="showDiagModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
         </div>
 
         <div class="flex-1 overflow-y-auto py-4">
