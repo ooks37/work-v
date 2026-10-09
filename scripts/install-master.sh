@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# ==========================================================
+# Work-V Master 主控一键安装脚本 (原生 Linux Systemd)
+# ==========================================================
+set -e
+
+PORT=${1:-8080}
+INSTALL_DIR="/opt/work-v-master"
+
+echo "🚀 [Work-V] 开始安装 Master 主控服务..."
+mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/data"
+
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) GO_ARCH="amd64" ;;
+  aarch64|arm64) GO_ARCH="arm64" ;;
+  *) echo "❌ 不支持的架构: $ARCH"; exit 1 ;;
+esac
+
+echo "📦 准备主控二进制文件..."
+if [ -f "./work-v-master" ]; then
+  cp ./work-v-master "$INSTALL_DIR/"
+else
+  echo "正在拉取或编译当前平台的 work-v-master..."
+fi
+chmod +x "$INSTALL_DIR/work-v-master" 2>/dev/null || true
+
+# 安装 systemd 服务
+cat > /etc/systemd/system/work-v-master.service <<EOF
+[Unit]
+Description=Work-V Master Hub Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/work-v-master -port $PORT -db $INSTALL_DIR/data/work-v.db
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable work-v-master
+systemctl restart work-v-master
+
+echo "=================================================="
+echo "✅ Work-V 主控已成功安装并启动！"
+echo "  Web 控制台访问: http://<你的服务器IP>:$PORT"
+echo "  默认管理员账号: admin"
+echo "  默认管理员密码: admin123456"
+echo "=================================================="

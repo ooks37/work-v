@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  work-v-master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: work-v-master
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
