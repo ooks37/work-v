@@ -1,102 +1,226 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Work-V 分布式网络与订阅中枢管理工具 (类似宝塔 bt 运维指令)
+# Work-V 分布式网络与订阅中枢 · 全功能终端运维管理面板 (类似宝塔 bt 运维指令)
 # ==============================================================================
 set -e
 
 COLOR_GREEN="\033[32m"
 COLOR_RED="\033[31m"
 COLOR_YELLOW="\033[33m"
+COLOR_BLUE="\033[34m"
 COLOR_CYAN="\033[36m"
+COLOR_BOLD="\033[1m"
 COLOR_RESET="\033[0m"
 
 APP_DIR="/opt/work-v-master"
 BIN_FILE="$APP_DIR/work-v-master"
 DB_FILE="$APP_DIR/data/work-v.db"
-SERVICE_NAME="work-v-master"
+SERVICE_MASTER="work-v-master"
+SERVICE_AGENT="work-v-agent"
+
+read_input() {
+    local prompt="$1"
+    local var_name="$2"
+    local default_val="$3"
+    local val=""
+
+    if [ -t 0 ]; then
+        read -r -p "$prompt" val
+    elif (exec 3< /dev/tty) 2>/dev/null; then
+        read -r -p "$prompt" val < /dev/tty
+    else
+        read -r -p "$prompt" val 2>/dev/null || val=""
+    fi
+
+    if [ -z "$val" ] && [ -n "$default_val" ]; then
+        val="$default_val"
+    fi
+    eval "$var_name=\"$val\""
+}
+
+check_master_active() {
+    if systemctl is-active "$SERVICE_MASTER" &>/dev/null; then
+        echo -e "${COLOR_GREEN}🟢 运行中${COLOR_RESET}"
+    elif [ -f "$BIN_FILE" ]; then
+        echo -e "${COLOR_RED}🔴 已停止${COLOR_RESET}"
+    else
+        echo -e "${COLOR_YELLOW}⚪ 未安装${COLOR_RESET}"
+    fi
+}
+
+check_agent_active() {
+    if systemctl is-active "$SERVICE_AGENT" &>/dev/null; then
+        echo -e "${COLOR_GREEN}🟢 运行中${COLOR_RESET}"
+    elif [ -f "/opt/work-v-agent/work-v-agent" ]; then
+        echo -e "${COLOR_RED}🔴 已停止${COLOR_RESET}"
+    else
+        echo -e "${COLOR_YELLOW}⚪ 未安装${COLOR_RESET}"
+    fi
+}
 
 show_info() {
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
-    echo -e "              ${COLOR_GREEN}Work-V 控制台安全入口与凭据信息${COLOR_RESET}                    "
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
-    $BIN_FILE -entry -db "$DB_FILE"
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    if [ -f "$BIN_FILE" ]; then
+        $BIN_FILE -entry -db "$DB_FILE"
+    else
+        echo -e "${COLOR_RED}❌ 本机未安装 Work-V Master 主控端${COLOR_RESET}"
+    fi
 }
 
 restart_service() {
-    echo -e "${COLOR_YELLOW}正在重启 Work-V Master 服务...${COLOR_RESET}"
-    systemctl restart $SERVICE_NAME
-    sleep 2
-    systemctl status $SERVICE_NAME --no-pager
+    echo -e "${COLOR_YELLOW}正在重启 Work-V 服务...${COLOR_RESET}"
+    if [ -f "/etc/systemd/system/${SERVICE_MASTER}.service" ]; then
+        systemctl restart "$SERVICE_MASTER"
+        echo -e "Master: $(check_master_active)"
+    fi
+    if [ -f "/etc/systemd/system/${SERVICE_AGENT}.service" ]; then
+        systemctl restart "$SERVICE_AGENT"
+        echo -e "Agent:  $(check_agent_active)"
+    fi
     echo -e "${COLOR_GREEN}✅ 服务重启完成！${COLOR_RESET}"
 }
 
 stop_service() {
-    echo -e "${COLOR_YELLOW}正在停止 Work-V Master 服务...${COLOR_RESET}"
-    systemctl stop $SERVICE_NAME
+    echo -e "${COLOR_YELLOW}正在停止 Work-V 服务...${COLOR_RESET}"
+    systemctl stop "$SERVICE_MASTER" 2>/dev/null || true
+    systemctl stop "$SERVICE_AGENT" 2>/dev/null || true
     echo -e "${COLOR_GREEN}✅ 服务已停止！${COLOR_RESET}"
 }
 
 start_service() {
-    echo -e "${COLOR_YELLOW}正在启动 Work-V Master 服务...${COLOR_RESET}"
-    systemctl start $SERVICE_NAME
-    sleep 2
-    systemctl status $SERVICE_NAME --no-pager
+    echo -e "${COLOR_YELLOW}正在启动 Work-V 服务...${COLOR_RESET}"
+    systemctl start "$SERVICE_MASTER" 2>/dev/null || true
+    systemctl start "$SERVICE_AGENT" 2>/dev/null || true
     echo -e "${COLOR_GREEN}✅ 服务已启动！${COLOR_RESET}"
 }
 
 show_status() {
-    systemctl status $SERVICE_NAME --no-pager
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    echo -e "                 Work-V 运行状态与资源统计                        "
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    if [ -f "/etc/systemd/system/${SERVICE_MASTER}.service" ]; then
+        echo -e "【Master 主控端】"
+        systemctl status "$SERVICE_MASTER" --no-pager -l || true
+        echo ""
+    fi
+    if [ -f "/etc/systemd/system/${SERVICE_AGENT}.service" ]; then
+        echo -e "【Agent 从节点】"
+        systemctl status "$SERVICE_AGENT" --no-pager -l || true
+        echo ""
+    fi
+    echo -e "【系统内存与进程负载】"
+    free -h
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
 }
 
 show_log() {
-    echo -e "${COLOR_YELLOW}正在查看 Work-V 实时日志 (Ctrl+C 退出)...${COLOR_RESET}"
-    journalctl -u $SERVICE_NAME -f -n 40
-}
-
-set_safe_entry() {
-    read -p "请输入新的安全入口路径 (例如 /safe_entry 或 /my_secret): " new_path
-    if [ -n "$new_path" ]; then
-        $BIN_FILE -set-entry "$new_path" -db "$DB_FILE"
-        systemctl restart $SERVICE_NAME
-        echo -e "${COLOR_GREEN}✅ 安全入口已更新并重启生效！${COLOR_RESET}"
-        show_info
+    echo -e "${COLOR_YELLOW}请选择需要查看的日志：${COLOR_RESET}"
+    echo "  [1] Master 主控端日志"
+    echo "  [2] Agent 从节点日志"
+    read_input "请选择 [默认 1]: " log_choice "1"
+    if [ "$log_choice" = "2" ]; then
+        journalctl -u "$SERVICE_AGENT" -f -n 40
+    else
+        journalctl -u "$SERVICE_MASTER" -f -n 40
     fi
 }
 
-reset_admin_password() {
-    read -p "确认重置管理员密码为默认值 admin123456 吗？[y/N]: " confirm
-    if [[ "$confirm" =~ ^[yY]$ ]]; then
-        $BIN_FILE -reset-admin -db "$DB_FILE"
-        echo -e "${COLOR_GREEN}✅ 管理员密码已重置为 admin123456！${COLOR_RESET}"
+set_safe_entry() {
+    local new_path="$1"
+    if [ -z "$new_path" ]; then
+        read_input "请输入新的安全入口路径 (例如 /safe_entry 或 /my_console): " new_path ""
+    fi
+    if [ -n "$new_path" ]; then
+        $BIN_FILE -set-entry "$new_path" -db "$DB_FILE"
+        systemctl restart "$SERVICE_MASTER"
+        echo -e "${COLOR_GREEN}✅ 安全入口已更新并自动重启生效！${COLOR_RESET}"
+    fi
+}
+
+disable_safe_entry() {
+    $BIN_FILE -disable-entry -db "$DB_FILE"
+    systemctl restart "$SERVICE_MASTER"
+    echo -e "${COLOR_GREEN}✅ 安全入口保护已关闭！可直接访问域名登录。${COLOR_RESET}"
+}
+
+set_password() {
+    local pwd="$1"
+    if [ -z "$pwd" ]; then
+        read_input "请输入管理员 admin 的新密码: " pwd ""
+    fi
+    if [ -n "$pwd" ]; then
+        $BIN_FILE -set-password "$pwd" -db "$DB_FILE"
+    fi
+}
+
+reset_password_default() {
+    $BIN_FILE -reset-admin -db "$DB_FILE"
+}
+
+list_all_nodes() {
+    if [ -f "$BIN_FILE" ]; then
+        $BIN_FILE -nodes -db "$DB_FILE"
+    fi
+}
+
+add_new_node() {
+    local node_name="$1"
+    if [ -z "$node_name" ]; then
+        read_input "请输入新节点标识名称 (如 香港BGP-01 / 美西CN2): " node_name "新建节点"
+    fi
+    if [ -f "$BIN_FILE" ]; then
+        $BIN_FILE -add-node "$node_name" -db "$DB_FILE"
     fi
 }
 
 test_nginx() {
-    echo -e "${COLOR_YELLOW}检查 Nginx 代理状态...${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}检查 Nginx 配置与反代连通性...${COLOR_RESET}"
     nginx -t
-    echo -e "${COLOR_YELLOW}测试本地反代响应...${COLOR_RESET}"
-    curl -s -o /dev/null -w "Local 8080: %{http_code}\n" http://127.0.0.1:8080/
-    curl -s -o /dev/null -w "Domain 80: %{http_code}\n" http://qweqwe.shangxinci.com/
-    echo -e "${COLOR_GREEN}✅ 测试通过！${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}测试本地与公网响应状态码...${COLOR_RESET}"
+    curl -s -o /dev/null -w "• 本地 127.0.0.1:8080: %{http_code}\n" http://127.0.0.1:8080/ || true
+    curl -s -o /dev/null -w "• 域名 https://qweqwe.shangxinci.com: %{http_code}\n" https://qweqwe.shangxinci.com/ || true
+    echo -e "${COLOR_GREEN}✅ 测试完成！${COLOR_RESET}"
+}
+
+drop_caches() {
+    echo -e "${COLOR_YELLOW}正在释放系统缓存并整理内存...${COLOR_RESET}"
+    sync
+    echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    free -h
+    echo -e "${COLOR_GREEN}✅ 内存缓存已深度清理！${COLOR_RESET}"
+}
+
+uninstall_confirm() {
+    read_input "确定要卸载 Work-V 服务吗？[y/N]: " confirm "N"
+    if [[ "$confirm" =~ ^[yY]$ ]]; then
+        systemctl stop "$SERVICE_MASTER" "$SERVICE_AGENT" 2>/dev/null || true
+        systemctl disable "$SERVICE_MASTER" "$SERVICE_AGENT" 2>/dev/null || true
+        rm -f "/etc/systemd/system/${SERVICE_MASTER}.service" "/etc/systemd/system/${SERVICE_AGENT}.service"
+        systemctl daemon-reload
+        echo -e "${COLOR_GREEN}✅ Work-V 服务与守护已被安全移除。${COLOR_RESET}"
+    fi
 }
 
 show_menu() {
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
-    echo -e "           ${COLOR_GREEN}Work-V 分布式网络中枢管理命令行 (v1.0.0)${COLOR_RESET}           "
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
-    echo -e " (1) 重启 Master 服务               (5) 查看当前安全入口与凭据"
-    echo -e " (2) 停止 Master 服务               (6) 修改安全入口路径"
-    echo -e " (3) 启动 Master 服务               (7) 重置管理员密码"
-    echo -e " (4) 查看运行状态与内存占用         (8) 查看服务实时日志"
-    echo -e " (9) 测试 Nginx 代理与端口状态      (0) 退出管理"
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
-    
-    # 打印当前安全入口快捷摘要
-    $BIN_FILE -entry -db "$DB_FILE" 2>/dev/null | grep -E "安全入口路径|外网域名入口" || true
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+    echo -e "       ${COLOR_GREEN}${COLOR_BOLD}Work-V 分布式网络与订阅中枢 · 终端运维管理平台 (v1.2.0)${COLOR_RESET}        "
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+    echo -e " 主控端 (Master): $(check_master_active)    从节点 (Agent): $(check_agent_active)"
+    echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
+    echo -e " 【核心服务运维】                          【账号与安全管理】"
+    echo -e "  (1)  重启 Work-V 服务                    (5)  查看面板访问地址与安全入口"
+    echo -e "  (2)  停止 Work-V 服务                    (6)  修改安全入口路径"
+    echo -e "  (3)  启动 Work-V 服务                    (7)  一键关闭安全入口限制 (免密入口)"
+    echo -e "  (4)  查看服务运行状态 & 内存占用          (8)  修改管理员密码"
+    echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
+    echo -e " 【分布式从属节点管理】                    【系统与环境维护】"
+    echo -e "  (9)  查看所有受控节点列表与在线状态       (12) 检查 Nginx 反代与 SSL 连通性"
+    echo -e "  (10) 快速添加新副节点 (生成纳管命令)     (13) 释放系统内存与缓存清理"
+    echo -e "  (11) 查看服务实时运行日志                (14) 卸载清理 Work-V 服务"
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+    echo -e "  (0)  退出管理"
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
 
-    read -p "请输入编号 [0-9]: " choice
+    read_input "请输入操作编号 [0-14]: " choice ""
     case "$choice" in
         1) restart_service ;;
         2) stop_service ;;
@@ -104,11 +228,16 @@ show_menu() {
         4) show_status ;;
         5) show_info ;;
         6) set_safe_entry ;;
-        7) reset_admin_password ;;
-        8) show_log ;;
-        9) test_nginx ;;
+        7) disable_safe_entry ;;
+        8) set_password ;;
+        9) list_all_nodes ;;
+        10) add_new_node ;;
+        11) show_log ;;
+        12) test_nginx ;;
+        13) drop_caches ;;
+        14) uninstall_confirm ;;
         0) exit 0 ;;
-        *) echo -e "${COLOR_RED}无效选项${COLOR_RESET}" ;;
+        *) echo -e "${COLOR_RED}无效选项，请输入 0-14${COLOR_RESET}" ;;
     esac
 }
 
@@ -120,7 +249,14 @@ case "$1" in
     start) start_service ;;
     status) show_status ;;
     log|logs) show_log ;;
-    passwd|password) reset_admin_password ;;
-    test) test_nginx ;;
+    passwd|password) set_password "$2" ;;
+    reset-admin) reset_password_default ;;
+    set-entry) set_safe_entry "$2" ;;
+    disable-entry) disable_safe_entry ;;
+    nodes) list_all_nodes ;;
+    add-node) add_new_node "$2" ;;
+    test|nginx) test_nginx ;;
+    clean|drop) drop_caches ;;
+    uninstall) uninstall_confirm ;;
     *) show_menu ;;
 esac

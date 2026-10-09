@@ -17,6 +17,7 @@ import (
 	"work-v/internal/master/model"
 	"work-v/internal/master/service"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -29,7 +30,11 @@ func main() {
 	jwtSecret := flag.String("jwt-secret", "", "自定义 JWT 密钥")
 	showEntry := flag.Bool("entry", false, "查看当前安全入口与管理员访问地址 (类似宝塔 bt default)")
 	setEntry := flag.String("set-entry", "", "修改安全入口路径 (如 /my_secret)")
+	disableEntry := flag.Bool("disable-entry", false, "关闭安全入口拦截")
 	resetAdmin := flag.Bool("reset-admin", false, "重置管理员密码为默认值 admin123456")
+	setPass := flag.String("set-password", "", "修改管理员密码为指定值")
+	listNodes := flag.Bool("nodes", false, "查看所有受控节点列表与状态")
+	addNode := flag.String("add-node", "", "添加新节点并生成一键纳管命令 (参数为节点名称)")
 	flag.Parse()
 
 	// 1. 初始化数据库
@@ -55,6 +60,8 @@ func main() {
 		fmt.Printf("• 外网域名入口: https://qweqwe.shangxinci.com%s\n", safePath)
 		fmt.Printf("• 默认管理账号: %s\n", admin.Username)
 		fmt.Println("• 如需修改入口: work-v-master -set-entry /new_path")
+		fmt.Println("• 如需关闭入口: work-v-master -disable-entry")
+		fmt.Println("• 如需修改密码: work-v-master -set-password <新密码>")
 		fmt.Println("• 如需重置密码: work-v-master -reset-admin")
 		fmt.Println("==================================================")
 		os.Exit(0)
@@ -73,7 +80,20 @@ func main() {
 		})
 		fmt.Println("==================================================")
 		fmt.Printf("✅ 安全入口已成功更新为: %s\n", newPath)
-		fmt.Printf("外网访问地址: http://qweqwe.shangxinci.com%s\n", newPath)
+		fmt.Printf("外网访问地址: https://qweqwe.shangxinci.com%s\n", newPath)
+		fmt.Println("==================================================")
+		os.Exit(0)
+	}
+
+	// 3.1 处理关闭安全入口拦截
+	if *disableEntry {
+		model.DB.Save(&model.SystemSetting{
+			Key:       "safe_path",
+			Value:     "",
+			UpdatedAt: time.Now(),
+		})
+		fmt.Println("==================================================")
+		fmt.Println("✅ 安全入口已关闭！当前可直接通过 https://qweqwe.shangxinci.com/ 访问面板")
 		fmt.Println("==================================================")
 		os.Exit(0)
 	}
@@ -85,6 +105,73 @@ func main() {
 		fmt.Println("==================================================")
 		fmt.Println("✅ 管理员密码已重置为: admin123456")
 		fmt.Println("==================================================")
+		os.Exit(0)
+	}
+
+	// 4.1 处理自定义修改管理员密码
+	if *setPass != "" {
+		pwd := strings.TrimSpace(*setPass)
+		if len(pwd) < 6 {
+			fmt.Println("❌ 密码长度不能少于 6 位")
+			os.Exit(1)
+		}
+		hash, _ := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+		model.DB.Model(&model.Admin{}).Where("username = ?", "admin").Update("password_hash", string(hash))
+		fmt.Println("==================================================")
+		fmt.Printf("✅ 管理员 admin 密码已成功修改为: %s\n", pwd)
+		fmt.Println("==================================================")
+		os.Exit(0)
+	}
+
+	// 5. 处理列出所有节点
+	if *listNodes {
+		var nodes []model.Node
+		model.DB.Order("id asc").Find(&nodes)
+		fmt.Println("================================================================================")
+		fmt.Printf("%-4s %-16s %-10s %-16s %-8s %-18s\n", "ID", "节点名称", "状态", "IP/地址", "CPU/内存", "最后活跃时间")
+		fmt.Println("--------------------------------------------------------------------------------")
+		if len(nodes) == 0 {
+			fmt.Println("暂无受控节点。使用 work-v add-node <名称> 添加从属节点")
+		} else {
+			for _, n := range nodes {
+				statusStr := "🔴 离线"
+				if n.Status == "online" {
+					statusStr = "🟢 在线"
+				}
+				lastSeen := "从未连接"
+				if n.LastSeenAt != nil {
+					lastSeen = n.LastSeenAt.Format("2006-01-02 15:04:05")
+				}
+				perfStr := fmt.Sprintf("%.1f%%", n.CPUPercent)
+				fmt.Printf("%-4d %-16s %-10s %-16s %-8s %-18s\n", n.ID, n.Name, statusStr, n.Address, perfStr, lastSeen)
+			}
+		}
+		fmt.Println("================================================================================")
+		os.Exit(0)
+	}
+
+	// 6. 处理快捷添加节点
+	if *addNode != "" {
+		nodeName := strings.TrimSpace(*addNode)
+		token := strings.ReplaceAll(uuid.New().String(), "-", "")
+		newNode := model.Node{
+			Name:    nodeName,
+			Token:   token,
+			Address: "127.0.0.1",
+			Rate:    1.0,
+			Status:  "offline",
+		}
+		if err := model.DB.Create(&newNode).Error; err != nil {
+			fmt.Printf("❌ 创建节点失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("================================================================================")
+		fmt.Printf("✅ 从属节点【%s】创建成功！(Node ID: %d)\n", nodeName, newNode.ID)
+		fmt.Printf("• 节点专属 Token: %s\n", token)
+		fmt.Println("• 在目标副节点服务器终端直接执行以下一键纳管指令即可自动接入：")
+		fmt.Println("--------------------------------------------------------------------------------")
+		fmt.Printf("curl -fsSL https://qweqwe.shangxinci.com/install.sh | bash -s -- --token %s\n", token)
+		fmt.Println("================================================================================")
 		os.Exit(0)
 	}
 
