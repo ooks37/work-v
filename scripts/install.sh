@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Work-V 分布式网络与订阅中枢 · 全自动智能安装脚本 (主副节点自适应)
+# Work-V 分布式网络与订阅中枢 · 全环境自适应智能部署引擎 (v2.0)
+# 特性：国内/海外镜像自适应、1h1g低配小鸡Swap自适应、BBR加速自适应、NAT端口自适应、防火墙自动放行
 # ==============================================================================
 set -e
 
@@ -18,6 +19,10 @@ TOKEN=""
 ROLE=""
 PORT=8080
 SAFE_PATH="/safe_entry"
+CUSTOM_PORT=""
+FORCE_MIRROR=0
+DISABLE_SWAP=0
+DISABLE_BBR=0
 
 # 通用输入读取器 (完美支持 curl ... | bash 管道交互与无 tty 环境)
 read_input() {
@@ -56,6 +61,17 @@ detect_env() {
     esac
 
     LOCAL_IP=$(curl -s4 --max-time 3 https://api.ipify.org 2>/dev/null || curl -s4 --max-time 3 https://ip.sb 2>/dev/null || hostname -I | awk '{print $1}')
+    INT_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    IS_NAT=0
+    if [[ "$INT_IP" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.) ]] && [ "$INT_IP" != "$LOCAL_IP" ]; then
+        IS_NAT=1
+    fi
+
+    # 智能探测当前主机网络环境 (国内 vs 海外)
+    IS_CHINA=0
+    if [ "$FORCE_MIRROR" -eq 1 ] || ! curl -s4 --connect-timeout 2 -I https://github.com &>/dev/null; then
+        IS_CHINA=1
+    fi
 }
 
 detect_installed() {
@@ -70,15 +86,95 @@ detect_installed() {
 }
 
 show_header() {
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
-    echo -e "       ${COLOR_GREEN}${COLOR_BOLD}Work-V 分布式网络与订阅中枢 · 全自动一键部署系统${COLOR_RESET}        "
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+    echo -e "       ${COLOR_GREEN}${COLOR_BOLD}Work-V 分布式网络与订阅中枢 · 全环境自适应安装引擎 (v2.0)${COLOR_RESET}        "
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
     echo -e " 系统环境: ${COLOR_YELLOW}${OS_NAME}${COLOR_RESET} | 架构: ${COLOR_YELLOW}${ARCH} (${GO_ARCH})${COLOR_RESET} | 公网 IP: ${COLOR_YELLOW}${LOCAL_IP}${COLOR_RESET}"
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    if [ "$IS_NAT" -eq 1 ]; then
+        echo -e " 架构特征: ${COLOR_CYAN}⚡ NAT 端口映射机器${COLOR_RESET} (内网 IP: ${INT_IP})"
+    else
+        echo -e " 架构特征: ${COLOR_GREEN}🌐 独立公网 IP 主机${COLOR_RESET}"
+    fi
+    if [ "$IS_CHINA" -eq 1 ]; then
+        echo -e " 网络链路: ${COLOR_YELLOW}🇨🇳 中国大陆网络环境 (已自动启用 CDN 镜像极速加速)${COLOR_RESET}"
+    else
+        echo -e " 网络链路: ${COLOR_GREEN}🌍 海外全球高速直连网络${COLOR_RESET}"
+    fi
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+}
+
+# 硬件与网络自适应调节器 (低配小鸡优化、BBR启用、系统并发限制)
+tune_server_system() {
+    echo -e "\n${COLOR_CYAN}🔧 [环境自适应检查与系统性能调优]...${COLOR_RESET}"
+
+    # 1. 低配小鸡 Swap 自适应 (防 OOM 崩溃)
+    if [ "$DISABLE_SWAP" -eq 0 ]; then
+        local mem_mb=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}')
+        local swap_mb=$(free -m 2>/dev/null | awk '/Swap:/ {print $2}')
+        if [ -n "$mem_mb" ] && [ "$mem_mb" -lt 1500 ] && [ "$swap_mb" -lt 512 ]; then
+            echo -e "💡 ${COLOR_YELLOW}[硬件自适应] 检测到低配小鸡 (物理内存 ${mem_mb}MB < 1.5GB 且无 Swap)，正在自动挂载 1GB 虚拟 Swap 内存，防止 OOM 崩溃...${COLOR_RESET}"
+            if [ ! -f /swapfile ]; then
+                fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 2>/dev/null
+                chmod 600 /swapfile
+                mkswap /swapfile 2>/dev/null || true
+                swapon /swapfile 2>/dev/null || true
+                if ! grep -q "/swapfile" /etc/fstab 2>/dev/null; then
+                    echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
+                fi
+                echo -e "✅ ${COLOR_GREEN}1GB Swap 虚拟内存挂载成功！${COLOR_RESET}"
+            fi
+        fi
+    fi
+
+    # 2. 内核网络加速 BBR 自适应
+    if [ "$DISABLE_BBR" -eq 0 ]; then
+        local current_cc=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+        if [ "$current_cc" != "bbr" ]; then
+            echo -e "🚀 ${COLOR_YELLOW}[内核自适应] 正在为系统自动开启 TCP BBR 极速拥塞控制算法...${COLOR_RESET}"
+            if modprobe tcp_bbr 2>/dev/null; then
+                sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf 2>/dev/null || true
+                sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf 2>/dev/null || true
+                echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
+                echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+                sysctl -p 2>/dev/null || true
+                echo -e "✅ ${COLOR_GREEN}TCP BBR 加速算法已成功激活！${COLOR_RESET}"
+            fi
+        fi
+    fi
+
+    # 3. 高并发文件描述符限制优化
+    ulimit -n 1048576 2>/dev/null || true
+    if ! grep -q "1048576" /etc/security/limits.conf 2>/dev/null; then
+        echo "* soft nofile 1048576" >> /etc/security/limits.conf
+        echo "* hard nofile 1048576" >> /etc/security/limits.conf
+    fi
+}
+
+# 自动放行防火墙端口 (支持 UFW / Firewalld / iptables)
+open_firewall_ports() {
+    local p="$1"
+    [ -z "$p" ] && return 0
+
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        echo -e "🛡️ ${COLOR_YELLOW}[防火墙自适应] 检测到 UFW 活跃，正在自动放行端口 ${p}...${COLOR_RESET}"
+        ufw allow "${p}/tcp" 2>/dev/null || true
+        ufw allow "${p}/udp" 2>/dev/null || true
+    elif command -v firewall-cmd &>/dev/null && systemctl is-active firewalld &>/dev/null; then
+        echo -e "🛡️ ${COLOR_YELLOW}[防火墙自适应] 检测到 Firewalld 活跃，正在自动放行端口 ${p}...${COLOR_RESET}"
+        firewall-cmd --zone=public --add-port="${p}/tcp" --permanent 2>/dev/null || true
+        firewall-cmd --zone=public --add-port="${p}/udp" --permanent 2>/dev/null || true
+        firewall-cmd --reload 2>/dev/null || true
+    elif command -v iptables &>/dev/null; then
+        iptables -I INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || true
+        iptables -I INPUT -p udp --dport "$p" -j ACCEPT 2>/dev/null || true
+    fi
 }
 
 install_master() {
     echo -e "\n${COLOR_YELLOW}🚀 开始部署【主节点 (Master Hub)】...${COLOR_RESET}"
+    tune_server_system
+    open_firewall_ports "$PORT"
+
     INSTALL_DIR="/opt/work-v-master"
     mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/data" "$INSTALL_DIR/scripts"
 
@@ -127,7 +223,7 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/work-v-master -port $PORT -db $INSTALL_DIR/data/work-v.db
 Restart=always
 RestartSec=3
-LimitNOFILE=65535
+LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
@@ -138,9 +234,9 @@ EOF
     systemctl restart work-v-master
     sleep 2
 
-    echo -e "${COLOR_GREEN}==================================================================${COLOR_RESET}"
+    echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
     echo -e "${COLOR_GREEN}🎉 Work-V 主控端已成功部署并启动！${COLOR_RESET}"
-    echo -e "${COLOR_GREEN}==================================================================${COLOR_RESET}"
+    echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
     if [ -x /usr/local/bin/work-v ]; then
         /usr/local/bin/work-v default 2>/dev/null || true
     else
@@ -148,12 +244,13 @@ EOF
         echo "• 管理账号: admin"
         echo "• 默认密码: admin123456"
     fi
-    echo -e "• 终端运维命令: ${COLOR_CYAN}work-v${COLOR_RESET} (类似宝塔 bt 指令，支持状态、密码、安全入口查询)"
-    echo -e "${COLOR_GREEN}==================================================================${COLOR_RESET}"
+    echo -e "• 终端运维命令: ${COLOR_CYAN}work-v${COLOR_RESET} (类似宝塔 bt 指令，支持状态、节点、密码、安全入口查询)"
+    echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
 }
 
 install_agent() {
     echo -e "\n${COLOR_YELLOW}🚀 开始部署【从节点 / 副节点 (Agent Node)】...${COLOR_RESET}"
+    tune_server_system
 
     if [ -z "$SERVER" ]; then
         read_input "请输入主控端地址 [默认 $DEFAULT_SERVER]: " SERVER "$DEFAULT_SERVER"
@@ -170,6 +267,12 @@ install_agent() {
     SERVER="${SERVER%/}"
     echo -e "  主控地址: ${COLOR_CYAN}$SERVER${COLOR_RESET}"
     echo -e "  节点令牌: ${COLOR_CYAN}$TOKEN${COLOR_RESET}"
+
+    # NAT 机器模式处理
+    if [ -n "$CUSTOM_PORT" ]; then
+        echo -e "  外部映射端口: ${COLOR_CYAN}$CUSTOM_PORT${COLOR_RESET} (NAT 机器模式)"
+        open_firewall_ports "$CUSTOM_PORT"
+    fi
 
     INSTALL_DIR="/opt/work-v-agent"
     mkdir -p "$INSTALL_DIR"
@@ -197,13 +300,19 @@ install_agent() {
 
     # 检查并自动安装 Sing-box 官方最新核心
     if ! command -v sing-box &> /dev/null && [ ! -f "/usr/local/bin/sing-box" ]; then
-        echo -e "⚡ 正在下载安装 Sing-box 官方核心..."
+        echo -e "⚡ 正在下载安装 Sing-box 官方最新核心..."
         SB_VER="1.10.7"
         SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${GO_ARCH}.tar.gz"
         SB_MIRROR="https://ghfast.top/${SB_URL}"
 
-        curl -fsSL --connect-timeout 5 "$SB_MIRROR" -o /tmp/sb.tar.gz 2>/dev/null || \
-        curl -fsSL --connect-timeout 8 "$SB_URL" -o /tmp/sb.tar.gz
+        if [ "$IS_CHINA" -eq 1 ]; then
+            echo -e "⚡ ${COLOR_CYAN}使用国内加速 CDN 节点下载内核产物...${COLOR_RESET}"
+            curl -fsSL --connect-timeout 8 "$SB_MIRROR" -o /tmp/sb.tar.gz 2>/dev/null || \
+            curl -fsSL --connect-timeout 8 "$SB_URL" -o /tmp/sb.tar.gz
+        else
+            curl -fsSL --connect-timeout 8 "$SB_URL" -o /tmp/sb.tar.gz 2>/dev/null || \
+            curl -fsSL --connect-timeout 8 "$SB_MIRROR" -o /tmp/sb.tar.gz
+        fi
 
         if [ -f /tmp/sb.tar.gz ]; then
             tar -zxvf /tmp/sb.tar.gz -C /tmp
@@ -218,6 +327,7 @@ install_agent() {
 {
   "server": "$SERVER",
   "token": "$TOKEN",
+  "custom_port": "$CUSTOM_PORT",
   "singbox_path": "/usr/local/bin/sing-box"
 }
 EOF
@@ -235,7 +345,7 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/work-v-agent --server $SERVER --token $TOKEN
 Restart=always
 RestartSec=5
-LimitNOFILE=65535
+LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
@@ -247,11 +357,11 @@ EOF
     sleep 2
 
     if systemctl is-active work-v-agent &>/dev/null; then
-        echo -e "${COLOR_GREEN}==================================================================${COLOR_RESET}"
+        echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
         echo -e "${COLOR_GREEN}✅【从节点 Agent】部署成功并已正常运行！${COLOR_RESET}"
         echo -e "已自动通过加密反向通道长连接至主控: ${COLOR_CYAN}$SERVER${COLOR_RESET}"
         echo -e "主控后台将实时展示当前节点的在线状态、呼吸心跳与网络系统指标。"
-        echo -e "${COLOR_GREEN}==================================================================${COLOR_RESET}"
+        echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
     else
         echo -e "${COLOR_RED}❌ Agent 服务启动失败，请检查 journalctl -u work-v-agent -n 30 日志${COLOR_RESET}"
         exit 1
@@ -279,22 +389,24 @@ interactive_menu() {
     if [ "$HAS_MASTER" -eq 1 ] && [ "$HAS_AGENT" -eq 0 ]; then
         echo -e " 💡 ${COLOR_GREEN}自动识别当前机器角色: 【主控端 (Master Hub)】${COLOR_RESET}"
         echo -e "    服务状态: ${COLOR_GREEN}$(systemctl is-active work-v-master 2>/dev/null || echo '未运行')${COLOR_RESET}"
-        echo -e "${COLOR_CYAN}------------------------------------------------------------------${COLOR_RESET}"
+        echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
         echo -e " 请选择操作选项："
         echo -e "   [1] 升级 / 覆盖安装【主控端 (Master Hub)】"
         echo -e "   [2] 重启 主控端服务"
         echo -e "   [3] 查看 主控端实时运行日志"
         echo -e "   [4] 查看 管理凭据与安全入口地址"
-        echo -e "   [5] 卸载 主控端服务"
+        echo -e "   [5] 一键开启 TCP BBR 极速拥塞控制"
+        echo -e "   [6] 卸载 主控端服务"
         echo -e "   [0] 退出"
-        echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+        echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
         read_input "请输入编号 [默认 1]: " choice "1"
         case "$choice" in
             1) install_master ;;
             2) systemctl restart work-v-master; echo -e "${COLOR_GREEN}✅ 已重启！${COLOR_RESET}" ;;
             3) journalctl -u work-v-master -f -n 40 ;;
             4) /usr/local/bin/work-v default 2>/dev/null || echo "请在浏览器访问: $SERVER$SAFE_PATH" ;;
-            5) uninstall_all ;;
+            5) tune_server_system ;;
+            6) uninstall_all ;;
             0) exit 0 ;;
             *) echo -e "${COLOR_RED}无效输入${COLOR_RESET}" ;;
         esac
@@ -305,20 +417,22 @@ interactive_menu() {
     if [ "$HAS_AGENT" -eq 1 ] && [ "$HAS_MASTER" -eq 0 ]; then
         echo -e " 💡 ${COLOR_GREEN}自动识别当前机器角色: 【从节点 (Agent Node)】${COLOR_RESET}"
         echo -e "    服务状态: ${COLOR_GREEN}$(systemctl is-active work-v-agent 2>/dev/null || echo '未运行')${COLOR_RESET}"
-        echo -e "${COLOR_CYAN}------------------------------------------------------------------${COLOR_RESET}"
+        echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
         echo -e " 请选择操作选项："
         echo -e "   [1] 升级 / 重新安装【从节点 (Agent Node)】"
         echo -e "   [2] 重启 从节点服务"
         echo -e "   [3] 查看 从节点实时运行日志"
-        echo -e "   [4] 卸载 从节点服务"
+        echo -e "   [4] 一键开启 TCP BBR 极速拥塞控制"
+        echo -e "   [5] 卸载 从节点服务"
         echo -e "   [0] 退出"
-        echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+        echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
         read_input "请输入编号 [默认 1]: " choice "1"
         case "$choice" in
             1) install_agent ;;
             2) systemctl restart work-v-agent; echo -e "${COLOR_GREEN}✅ 已重启！${COLOR_RESET}" ;;
             3) journalctl -u work-v-agent -f -n 40 ;;
-            4) uninstall_all ;;
+            4) tune_server_system ;;
+            5) uninstall_all ;;
             0) exit 0 ;;
             *) echo -e "${COLOR_RED}无效输入${COLOR_RESET}" ;;
         esac
@@ -329,12 +443,10 @@ interactive_menu() {
     SERVER_HOST=$(echo "$SERVER" | awk -F[/:] '{print $4}')
     SERVER_IP=$(getent ahostsv4 "$SERVER_HOST" 2>/dev/null | awk '{print $1}' | head -n 1 || true)
     RECOMMENDED_ROLE="agent"
-    RECOMMENDED_NAME="副节点 (从节点 / Agent Node)"
     DEFAULT_NUM="2"
 
     if [ -n "$LOCAL_IP" ] && [ -n "$SERVER_IP" ] && [ "$LOCAL_IP" = "$SERVER_IP" ]; then
         RECOMMENDED_ROLE="master"
-        RECOMMENDED_NAME="主节点 (Master Hub)"
         DEFAULT_NUM="1"
         echo -e " 💡 ${COLOR_GREEN}智能推断: 本机公网 IP ($LOCAL_IP) 匹配主控域名解析 IP！${COLOR_RESET}"
         echo -e "    推荐安装角色: ${COLOR_BOLD}${COLOR_GREEN}【主节点 (Master Hub)】${COLOR_RESET}"
@@ -342,7 +454,7 @@ interactive_menu() {
         echo -e " 💡 ${COLOR_GREEN}智能推断: 本机为外部从属服务器 (IP: $LOCAL_IP，主控 IP: $SERVER_IP)${COLOR_RESET}"
         echo -e "    推荐安装角色: ${COLOR_BOLD}${COLOR_GREEN}【副节点 (Agent Node)】${COLOR_RESET}"
     fi
-    echo -e "${COLOR_CYAN}------------------------------------------------------------------${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
 
     echo -e " 请选择安装角色："
     if [ "$DEFAULT_NUM" = "1" ]; then
@@ -354,7 +466,7 @@ interactive_menu() {
     fi
     echo -e "   [3] 卸载清理"
     echo -e "   [0] 退出脚本"
-    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
 
     read_input "请输入编号 [默认 $DEFAULT_NUM]: " choice "$DEFAULT_NUM"
     case "$choice" in
@@ -369,9 +481,6 @@ interactive_menu() {
 # ==============================================================================
 # 脚本主执行入口 (参数自适应 & 环境自检测)
 # ==============================================================================
-detect_env
-detect_installed
-
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -389,8 +498,18 @@ while [[ $# -gt 0 ]]; do
             SERVER="$2"
             shift 2 ;;
         --port|-p)
+            CUSTOM_PORT="$2"
             PORT="$2"
             shift 2 ;;
+        --mirror|--cn)
+            FORCE_MIRROR=1
+            shift ;;
+        --no-swap)
+            DISABLE_SWAP=1
+            shift ;;
+        --no-bbr)
+            DISABLE_BBR=1
+            shift ;;
         --entry)
             SAFE_PATH="$2"
             shift 2 ;;
@@ -401,6 +520,9 @@ while [[ $# -gt 0 ]]; do
             shift ;;
     esac
 done
+
+detect_env
+detect_installed
 
 # 根据角色参数自动执行，无需二次确认
 if [ "$ROLE" = "master" ]; then

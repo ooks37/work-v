@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,12 +118,32 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	h.register(agent)
 
-	// 更新节点状态为在线
+	// 更新节点状态为在线，并智能自动提取节点的公网 IP 回填
 	now := time.Now()
-	model.DB.Model(&node).Updates(map[string]any{
+	updates := map[string]any{
 		"status":       "online",
 		"last_seen_at": &now,
-	})
+	}
+
+	remoteIP := r.Header.Get("X-Forwarded-For")
+	if remoteIP == "" {
+		remoteIP = r.Header.Get("X-Real-IP")
+	}
+	if remoteIP == "" {
+		remoteIP = r.RemoteAddr
+	}
+	if idx := strings.Index(remoteIP, ","); idx != -1 {
+		remoteIP = strings.TrimSpace(remoteIP[:idx])
+	}
+	if host, _, err := net.SplitHostPort(remoteIP); err == nil {
+		remoteIP = host
+	}
+	if remoteIP != "" && remoteIP != "127.0.0.1" && (node.Address == "" || node.Address == "127.0.0.1" || strings.Contains(node.Address, "自动探测")) {
+		updates["address"] = remoteIP
+		node.Address = remoteIP
+	}
+
+	model.DB.Model(&node).Updates(updates)
 
 	log.Printf("[Hub] 节点已上线: ID=%d, Name=%s, Token=%s", node.ID, node.Name, node.Token)
 

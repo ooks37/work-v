@@ -243,16 +243,20 @@ func HandleGetNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, nodes)
 }
 
-// HandleCreateNode 创建节点
+// HandleCreateNode 创建节点 (支持免填地址，上线自动回填)
 func HandleCreateNode(c *gin.Context) {
 	var req struct {
 		Name    string  `json:"name" binding:"required"`
-		Address string  `json:"address" binding:"required"`
+		Address string  `json:"address"`
 		Rate    float64 `json:"rate"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误，请提供节点名称与地址"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供有效的节点名称"})
 		return
+	}
+
+	if req.Address == "" {
+		req.Address = "自动探测"
 	}
 
 	if req.Rate <= 0 {
