@@ -2,9 +2,10 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/url"
-	"strings"
+	"sync"
 	"time"
 
 	"work-v/internal/agent/collector"
@@ -19,6 +20,9 @@ type AgentClient struct {
 	token     string
 	runner    *runner.SingboxRunner
 	collector *collector.SystemCollector
+
+	// gorilla/websocket 不允许并发写, 心跳与配置回执必须串行化
+	writeMu sync.Mutex
 }
 
 func NewAgentClient(serverURL, token string, r *runner.SingboxRunner) *AgentClient {
@@ -28,6 +32,13 @@ func NewAgentClient(serverURL, token string, r *runner.SingboxRunner) *AgentClie
 		runner:    r,
 		collector: collector.NewSystemCollector(),
 	}
+}
+
+// writeJSON 串行化对同一连接的写操作 (gorilla/websocket 不允许并发写)
+func (c *AgentClient) writeJSON(conn *websocket.Conn, v any) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return conn.WriteJSON(v)
 }
 
 // Start 启动反向长连并保持自动重连
@@ -68,7 +79,7 @@ func (c *AgentClient) connectAndLoop() error {
 	// 1. 发送握手认证包
 	authMsg, _ := common.NewWSMessage(common.MsgTypeAuthReq, nil)
 	authMsg.NodeToken = c.token
-	if err := conn.WriteJSON(authMsg); err != nil {
+	if err := c.writeJSON(conn, authMsg); err != nil {
 		return err
 	}
 
@@ -84,8 +95,8 @@ func (c *AgentClient) connectAndLoop() error {
 	}
 	_ = json.Unmarshal(resp.Payload, &authResult)
 	if !authResult.Success {
-		log.Printf("[Agent] 认证被主控拒绝: %s", authResult.Error)
-		return nil
+		// 历史上这里返回 nil, 于是 token 配错时会每 5 秒无限重连且完全没有日志
+		return fmt.Errorf("认证被主控拒绝: %s (请核对 --token 是否与主控节点列表一致)", authResult.Error)
 	}
 
 	log.Println("[Agent] 节点认证成功！长连已建立")
@@ -108,10 +119,20 @@ func (c *AgentClient) connectAndLoop() error {
 			var config common.NodeConfigPayload
 			if err := json.Unmarshal(msg.Payload, &config); err == nil {
 				log.Printf("[Agent] 收到主控新配置推送 (Hash: %s)，正在应用...", config.ConfigHash)
-				if err := c.runner.ApplyConfig(&config); err != nil {
-					log.Printf("[Agent] 应用配置失败: %v", err)
+				applyErr := c.runner.ApplyConfig(&config)
+				if applyErr != nil {
+					log.Printf("[Agent] 应用配置失败: %v", applyErr)
 				} else {
 					log.Println("[Agent] 新配置已成功加载并在 Sing-box 生效！")
+				}
+
+				// 回执主控, 让下发结果(成功/失败原因)能在主控日志里看到
+				ack := common.ConfigAckPayload{ConfigHash: config.ConfigHash, Success: applyErr == nil}
+				if applyErr != nil {
+					ack.Error = applyErr.Error()
+				}
+				if ackMsg, err := common.NewWSMessage(common.MsgTypeConfigAck, ack); err == nil {
+					_ = c.writeJSON(conn, ackMsg)
 				}
 			}
 
@@ -138,7 +159,7 @@ func (c *AgentClient) heartbeatLoop(conn *websocket.Conn, done <-chan struct{}) 
 			// 采集硬件指标
 			stats := c.collector.CollectStats(c.runner.GetPid(), c.runner.IsRunning())
 			msg, _ := common.NewWSMessage(common.MsgTypeHeartbeat, stats)
-			if err := conn.WriteJSON(msg); err != nil {
+			if err := c.writeJSON(conn, msg); err != nil {
 				return
 			}
 
@@ -146,16 +167,8 @@ func (c *AgentClient) heartbeatLoop(conn *websocket.Conn, done <-chan struct{}) 
 			usersTraffic := c.runner.CollectTraffic()
 			if len(usersTraffic) > 0 {
 				tMsg, _ := common.NewWSMessage(common.MsgTypeTraffic, common.TrafficReportPayload{Users: usersTraffic})
-				_ = conn.WriteJSON(tMsg)
+				_ = c.writeJSON(conn, tMsg)
 			}
 		}
 	}
-}
-
-func cleanURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
-		return "http://" + raw
-	}
-	return raw
 }

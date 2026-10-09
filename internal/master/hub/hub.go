@@ -37,8 +37,8 @@ type AgentConn struct {
 // Hub 全局节点调度连接池
 type Hub struct {
 	mu         sync.RWMutex
-	agents     map[uint]*AgentConn      // NodeID -> AgentConn
-	tokenMap   map[string]uint          // NodeToken -> NodeID
+	agents     map[uint]*AgentConn // NodeID -> AgentConn
+	tokenMap   map[string]uint     // NodeToken -> NodeID
 	onTraffic  func(nodeID uint, users []common.UserDeltaTraffic)
 	onNeedConf func(nodeID uint) (*common.NodeConfigPayload, error)
 }
@@ -87,7 +87,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// 数据库校验 Token
 	var node model.Node
 	if err := model.DB.Where("token = ?", authMsg.NodeToken).First(&node).Error; err != nil {
-		log.Printf("[Hub] 节点 Token 验证未通过: %s", authMsg.NodeToken)
+		log.Printf("[Hub] 节点 Token 验证未通过: %s", maskToken(authMsg.NodeToken))
 		resp, _ := common.NewWSMessage(common.MsgTypeAuthResp, map[string]any{
 			"success": false,
 			"error":   "token 无效或节点不存在",
@@ -148,7 +148,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	model.DB.Model(&node).Updates(updates)
 
-	log.Printf("[Hub] 节点已上线: ID=%d, Name=%s, Token=%s", node.ID, node.Name, node.Token)
+	log.Printf("[Hub] 节点已上线: ID=%d, Name=%s, Token=%s", node.ID, node.Name, maskToken(node.Token))
 
 	// 立即下发一次最新配置
 	go h.PushConfigToNode(node.ID)
@@ -187,15 +187,13 @@ func (h *Hub) unregister(agent *AgentConn) {
 	}
 }
 
-// PushConfigToNode 针对指定节点推送最新 Sing-box 配置
+// PushConfigToNode 针对指定节点推送最新 Sing-box 配置。
+//
+// 出队必须始终在持有读锁的状态下完成: register()/unregister()/KickNode() 都在写锁内
+// 关闭旧连接的 SendChan, 历史实现"先解锁再发送"会在"节点重连"与"配置下发"撞车时触发
+// send on closed channel。该路径由 handler 派生的 goroutine 调用, gin.Recovery 兜不住,
+// 会直接把主控进程打挂。
 func (h *Hub) PushConfigToNode(nodeID uint) error {
-	h.mu.RLock()
-	agent, ok := h.agents[nodeID]
-	h.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("节点 %d 未在线", nodeID)
-	}
-
 	if h.onNeedConf == nil {
 		return fmt.Errorf("未设置配置提供回调")
 	}
@@ -210,12 +208,54 @@ func (h *Hub) PushConfigToNode(nodeID uint) error {
 		return err
 	}
 
-	select {
-	case agent.SendChan <- msg:
-		return nil
-	case <-time.After(3 * time.Second):
-		return fmt.Errorf("推送配置超时")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		h.mu.RLock()
+		agent, ok := h.agents[nodeID]
+		if !ok {
+			h.mu.RUnlock()
+			return fmt.Errorf("节点 %d 未在线", nodeID)
+		}
+		select {
+		case agent.SendChan <- msg:
+			h.mu.RUnlock()
+			return nil
+		default:
+		}
+		h.mu.RUnlock()
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("推送配置超时")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// KickNode 主动断开指定节点的长连 (删除节点、强制下线时使用)。
+// 只在写锁内摘表并关闭, unregister 随后会因为表中已无该连接而跳过, 不会二次 close。
+func (h *Hub) KickNode(nodeID uint) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	agent, ok := h.agents[nodeID]
+	if !ok {
+		return
+	}
+	delete(h.agents, nodeID)
+	delete(h.tokenMap, agent.NodeToken)
+	close(agent.SendChan)
+	if agent.Conn != nil {
+		_ = agent.Conn.Close()
+	}
+	log.Printf("[Hub] 已主动断开节点: ID=%d", nodeID)
+}
+
+// maskToken 日志脱敏, 避免节点凭证进入日志文件
+func maskToken(token string) string {
+	if len(token) <= 6 {
+		return "***"
+	}
+	return token[:6] + "***"
 }
 
 // BroadcastCutoffUser 向所有在线节点广播熔断指定用户 (踢下线)
@@ -290,6 +330,16 @@ func (a *AgentConn) readPump(h *Hub) {
 			var report common.TrafficReportPayload
 			if err := json.Unmarshal(msg.Payload, &report); err == nil && h.onTraffic != nil {
 				h.onTraffic(a.NodeID, report.Users)
+			}
+
+		case common.MsgTypeConfigAck:
+			var ack common.ConfigAckPayload
+			if err := json.Unmarshal(msg.Payload, &ack); err == nil {
+				if ack.Success {
+					log.Printf("[Hub] 节点 %d 已确认应用新配置 (hash=%s)", a.NodeID, ack.ConfigHash)
+				} else {
+					log.Printf("[Hub] 节点 %d 应用配置失败: %s", a.NodeID, ack.Error)
+				}
 			}
 		}
 	}

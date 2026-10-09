@@ -44,7 +44,8 @@ read_input() {
     if [ -z "$val" ] && [ -n "$default_val" ]; then
         val="$default_val"
     fi
-    eval "$var_name=\"$val\""
+    # 用 printf -v 赋值: eval 会把用户输入里的引号/$(...) 当代码执行
+    printf -v "$var_name" '%s' "$val"
 }
 
 detect_env() {
@@ -330,6 +331,16 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
+    # 应用命令行指定的自定义安全入口 (历史实现只解析 --entry 却从未写入主控配置)
+    if [ -n "$SAFE_PATH" ] && [ "$SAFE_PATH" != "/safe_entry" ]; then
+        if "$INSTALL_DIR/work-v-master" -db "$INSTALL_DIR/data/work-v.db" -set-entry "$SAFE_PATH" >/dev/null 2>&1; then
+            echo -e "🔐 已设置自定义安全入口: ${COLOR_GREEN}${SAFE_PATH}${COLOR_RESET}"
+        else
+            echo -e "${COLOR_YELLOW}⚠️ 自定义安全入口设置失败, 将使用默认值 /safe_entry${COLOR_RESET}"
+            SAFE_PATH="/safe_entry"
+        fi
+    fi
+
     systemctl daemon-reload
     systemctl enable work-v-master
     systemctl restart work-v-master
@@ -390,10 +401,18 @@ install_agent() {
     echo -e "  节点令牌: ${COLOR_CYAN}$TOKEN${COLOR_RESET}"
 
     # NAT 机器模式处理
+    # 说明: 端口无法由本脚本改变。节点实际监听端口由主控下发 (默认 2083/tcp, 2053/tcp,
+    # 8445/tcp, 8443/udp, 8444/udp), NAT 机器必须自行把这些端口映射到公网。
+    # 这里只做"放行 + 提示", 不再假装 --port 能改写节点监听端口。
     if [ -n "$CUSTOM_PORT" ]; then
         echo -e "  外部映射端口: ${COLOR_CYAN}$CUSTOM_PORT${COLOR_RESET} (NAT 机器模式)"
+        echo -e "  ${COLOR_YELLOW}提示: 该端口仅用于防火墙放行/记录, 节点监听端口由主控下发。${COLOR_RESET}"
         open_firewall_ports "$CUSTOM_PORT"
     fi
+    echo -e "  ${COLOR_CYAN}正在放行节点默认协议端口 (2083/2053/8445 TCP, 8443/8444 UDP)...${COLOR_RESET}"
+    for _np in 2083 2053 8445 8443 8444; do
+        open_firewall_ports "$_np"
+    done
 
     INSTALL_DIR="/opt/work-v-agent"
     mkdir -p "$INSTALL_DIR"
@@ -697,7 +716,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --domain, -d <DOMAIN> 指定主控外网访问域名 (可选，留空则使用纯 IP 访问)"
             echo "  --nginx               自动配置 Nginx 反向代理与 WebSocket 转发"
             echo "  --server, -s <URL>    指定主控端地址 (从节点安装时使用)"
-            echo "  --port, -p <PORT>     指定监听端口或 NAT 映射外网端口 (默认: 8080)"
+            echo "  --port, -p <PORT>     主控: 监听端口 (默认 8080); 从节点: NAT 映射端口(仅放行/记录)"
+            echo "                        节点实际监听端口由主控下发(2083/2053/8445 TCP, 8443/8444 UDP)"
             echo "  --entry <PATH>        指定主控安全入口路径 (默认: /safe_entry)"
             echo ""
             echo "性能与加速选项:"

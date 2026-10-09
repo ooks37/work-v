@@ -179,6 +179,17 @@ func (l *LoginLimiter) CheckAllowed(ip string) (bool, int) {
 func (l *LoginLimiter) RecordFailure(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	// 防止被大量源 IP 撑爆内存: 记录数超阈值时顺手清理已过期的条目
+	if len(l.attempts) > 4096 {
+		cutoff := time.Now().Add(-5 * time.Minute)
+		for k, v := range l.attempts {
+			if len(v) == 0 || v[len(v)-1].Before(cutoff) {
+				delete(l.attempts, k)
+			}
+		}
+	}
+
 	l.attempts[ip] = append(l.attempts[ip], time.Now())
 }
 

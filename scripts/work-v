@@ -35,7 +35,8 @@ read_input() {
     if [ -z "$val" ] && [ -n "$default_val" ]; then
         val="$default_val"
     fi
-    eval "$var_name=\"$val\""
+    # 用 printf -v 赋值: eval 会把用户输入里的引号/$(...) 当代码执行
+    printf -v "$var_name" '%s' "$val"
 }
 
 check_master_active() {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -23,6 +24,24 @@ import (
 
 //go:embed dist/*
 var embeddedWeb embed.FS
+
+// detectLocalIP 返回本机第一个可用的对外 IPv4。
+// 纯 IP 模式下用于打印可以直接复制的访问/纳管命令 (历史实现在这里硬编码 127.0.0.1,
+// 导致命令行输出的节点纳管命令在别的机器上根本连不上)。
+func detectLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, a := range addrs {
+		ipNet, ok := a.(*net.IPNet)
+		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.To4() == nil {
+			continue
+		}
+		return ipNet.IP.String()
+	}
+	return "127.0.0.1"
+}
 
 func main() {
 	port := flag.Int("port", 8080, "Web 服务监听端口")
@@ -56,22 +75,24 @@ func main() {
 			_ = model.SetSetting("master_domain", d)
 			log.Printf("[Work-V] 主控访问域名已配置为: https://%s", d)
 		}
+		// -domain 是纯 CLI 配置命令, 写完必须立刻退出。
+		// 历史实现漏了这句: 主控在运行时第二实例抢端口失败并以退出码 1 结束, 而 work-v/install.sh
+		// 都是 set -e, 后续 sed/重启全部不执行; 主控未运行时命令会永久挂起在前台 HTTP 服务上。
+		os.Exit(0)
 	}
 
 	getBaseURL := func() string {
-		d := model.GetSetting("master_domain", "")
-		if d != "" {
+		if d := model.GetSetting("master_domain", ""); d != "" {
 			return "https://" + d
 		}
-		return fmt.Sprintf("http://127.0.0.1:%d", *port)
+		return fmt.Sprintf("http://%s:%d", detectLocalIP(), *port)
 	}
 
 	// 2. 处理命令行安全入口查询
 	if *showEntry {
-		var safeSetting model.SystemSetting
-		safePath := "/safe_entry"
-		if err := model.DB.Where("key = ?", "safe_path").First(&safeSetting).Error; err == nil && safeSetting.Value != "" {
-			safePath = safeSetting.Value
+		entryEnabled, safePath := model.GetSafeEntryConfig()
+		if !entryEnabled {
+			safePath = ""
 		}
 		var admin model.Admin
 		model.DB.First(&admin)
@@ -80,13 +101,18 @@ func main() {
 		fmt.Println("==================================================")
 		fmt.Println("         Work-V 控制台安全入口与凭据信息          ")
 		fmt.Println("==================================================")
-		fmt.Printf("• 安全入口路径: %s\n", safePath)
+		if entryEnabled {
+			fmt.Printf("• 安全入口路径: %s\n", safePath)
+		} else {
+			fmt.Println("• 安全入口路径: 已关闭 (任何人可直接访问根路径 /)")
+		}
 		if d != "" {
 			fmt.Printf("• 域名外网入口: https://%s%s (若未配置SSL反代: http://%s:%d%s)\n", d, safePath, d, *port, safePath)
 			fmt.Printf("• 本机回环入口: http://127.0.0.1:%d%s\n", *port, safePath)
 		} else {
 			fmt.Printf("• 控制台外网入口: http://<你的服务器公网IP>:%d%s\n", *port, safePath)
-			fmt.Printf("• 本机回环入口: http://127.0.0.1:%d%s\n", *port, safePath)
+			fmt.Printf("• 本机内网入口:   http://%s:%d%s\n", detectLocalIP(), *port, safePath)
+			fmt.Printf("• 本机回环入口:   http://127.0.0.1:%d%s\n", *port, safePath)
 		}
 		fmt.Printf("• 默认管理账号: %s\n", admin.Username)
 		fmt.Println("• 如需绑定域名: work-v domain <你的域名>")
@@ -110,6 +136,7 @@ func main() {
 			Value:     newPath,
 			UpdatedAt: time.Now(),
 		})
+		_ = model.SetSetting("safe_entry_enabled", "1")
 		baseURL := getBaseURL()
 		fmt.Println("==================================================")
 		fmt.Printf("✅ 安全入口已成功更新为: %s\n", newPath)
@@ -120,11 +147,9 @@ func main() {
 
 	// 3.1 处理关闭安全入口拦截
 	if *disableEntry {
-		model.DB.Save(&model.SystemSetting{
-			Key:       "safe_path",
-			Value:     "",
-			UpdatedAt: time.Now(),
-		})
+		// 用显式开关关闭。不能把 safe_path 置空: 空值无法与"从未配置"区分,
+		// 重启后会被默认值重新打开 (这正是过去 work-v disable-entry 一重启就失效的原因)。
+		_ = model.SetSetting("safe_entry_enabled", "0")
 		baseURL := getBaseURL()
 		fmt.Println("==================================================")
 		fmt.Printf("✅ 安全入口已关闭！当前可直接通过 %s/ 访问面板\n", baseURL)
@@ -134,8 +159,16 @@ func main() {
 
 	// 4. 处理重置管理员密码
 	if *resetAdmin {
-		hash, _ := bcrypt.GenerateFromPassword([]byte("admin123456"), bcrypt.DefaultCost)
-		model.DB.Model(&model.Admin{}).Where("username = ?", "admin").Update("password_hash", string(hash))
+		hash, err := bcrypt.GenerateFromPassword([]byte("admin123456"), bcrypt.DefaultCost)
+		if err != nil {
+			fmt.Printf("❌ 密码哈希失败: %v\n", err)
+			os.Exit(1)
+		}
+		res := model.DB.Model(&model.Admin{}).Where("username = ?", "admin").Update("password_hash", string(hash))
+		if res.Error != nil || res.RowsAffected == 0 {
+			fmt.Println("❌ 未找到 admin 管理员记录，重置失败")
+			os.Exit(1)
+		}
 		fmt.Println("==================================================")
 		fmt.Println("✅ 管理员密码已重置为: admin123456")
 		fmt.Println("==================================================")
@@ -149,11 +182,18 @@ func main() {
 			fmt.Println("❌ 密码长度不能少于 6 位")
 			os.Exit(1)
 		}
-		hash, _ := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
-		model.DB.Model(&model.Admin{}).Where("username = ?", "admin").Update("password_hash", string(hash))
+		hash, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+		if err != nil {
+			fmt.Printf("❌ 密码哈希失败: %v\n", err)
+			os.Exit(1)
+		}
+		res := model.DB.Model(&model.Admin{}).Where("username = ?", "admin").Update("password_hash", string(hash))
+		if res.Error != nil || res.RowsAffected == 0 {
+			fmt.Println("❌ 未找到 admin 管理员记录，修改失败")
+			os.Exit(1)
+		}
 		fmt.Println("==================================================")
-		fmt.Printf("✅ 管理员 admin 密码已成功修改为: %s\n", pwd)
-		fmt.Println("==================================================")
+		fmt.Println("✅ 管理员 admin 密码已成功修改 (出于安全考虑不回显明文)")
 		os.Exit(0)
 	}
 
@@ -221,17 +261,14 @@ func main() {
 		middleware.SetJWTSecret(model.GetSetting("jwt_secret", ""))
 	}
 
-	// 初始化安全路径配置
-	var safeSetting model.SystemSetting
-	if err := model.DB.Where("key = ?", "safe_path").First(&safeSetting).Error; err == nil && safeSetting.Value != "" {
-		middleware.SetSafePath(safeSetting.Value)
+	// 初始化安全路径配置 (显式开关, 保证 work-v disable-entry 重启后依然生效)
+	safeEnabled, safePathCfg := model.GetSafeEntryConfig()
+	if safeEnabled {
+		middleware.SetSafePath(safePathCfg)
+		log.Printf("[Work-V 安全防护] 类似宝塔安全入口已启用: %s (未授权访问将展示安全拦截页)", safePathCfg)
 	} else {
-		middleware.SetSafePath("/safe_entry")
-		model.DB.Save(&model.SystemSetting{Key: "safe_path", Value: "/safe_entry"})
-	}
-	enabled, safePath := middleware.GetSafePath()
-	if enabled {
-		log.Printf("[Work-V 安全防护] 类似宝塔安全入口已启用: %s (未授权访问将展示安全拦截页)", safePath)
+		middleware.SetSafePath("")
+		log.Printf("[Work-V 安全防护] 安全入口拦截已关闭 (safe_entry_enabled=0)")
 	}
 
 	// 注入 Hub 回调 (流量记账与配置提供)

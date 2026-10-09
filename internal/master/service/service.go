@@ -132,12 +132,12 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 
 // ProtocolShareLink 单个协议的客户端直连链接与元数据
 type ProtocolShareLink struct {
-	Protocol    string `json:"protocol"`     // 协议标识
-	Name        string `json:"name"`         // 节点显示名
-	Port        int    `json:"port"`         // 监听端口
-	PortType    string `json:"port_type"`    // TCP / UDP
-	Link        string `json:"link"`         // 完整客户端导入链接 (vless://, hysteria2://, tuic:// 等)
-	Description string `json:"description"`  // 协议特性说明
+	Protocol    string `json:"protocol"`    // 协议标识
+	Name        string `json:"name"`        // 节点显示名
+	Port        int    `json:"port"`        // 监听端口
+	PortType    string `json:"port_type"`   // TCP / UDP
+	Link        string `json:"link"`        // 完整客户端导入链接 (vless://, hysteria2://, tuic:// 等)
+	Description string `json:"description"` // 协议特性说明
 }
 
 // GenerateNodeShareLinks 为指定节点与用户生成所有已启用协议的分享链接

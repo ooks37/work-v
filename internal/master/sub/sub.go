@@ -12,6 +12,7 @@ import (
 
 	"work-v/internal/common"
 	"work-v/internal/master/model"
+	"work-v/internal/master/service"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -31,6 +32,17 @@ func resolveNodeAddress(n *model.Node, c *gin.Context) string {
 		return h
 	}
 	return host
+}
+
+// resolveInbounds 解析节点入站配置; 节点还没有落库入站时回落到默认配置。
+// 历史实现在这里直接 continue, 于是用 work-v add-node 建出来的节点
+// (InboundsJSON 为空) 在订阅里一个都不出现, 而面板"节点链接"却显示正常, 极难排查。
+func resolveInbounds(n *model.Node) []common.InboundConfig {
+	var inbounds []common.InboundConfig
+	if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err == nil && len(inbounds) > 0 {
+		return inbounds
+	}
+	return service.GetOrCreateDefaultInbounds(n)
 }
 
 // HandleSubscription 处理多端自适应订阅主入口
@@ -90,8 +102,8 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 		if nodeAddr == "" {
 			continue
 		}
-		var inbounds []common.InboundConfig
-		if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
+		inbounds := resolveInbounds(&n)
+		if len(inbounds) == 0 {
 			continue
 		}
 
@@ -193,8 +205,8 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 		if nodeAddr == "" {
 			continue
 		}
-		var inbounds []common.InboundConfig
-		if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
+		inbounds := resolveInbounds(&n)
+		if len(inbounds) == 0 {
 			continue
 		}
 
@@ -214,16 +226,16 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				}
 
 				p := map[string]any{
-					"name":                name,
-					"type":                "vless",
-					"server":              nodeAddr,
-					"port":                in.ListenPort,
-					"uuid":                user.UUID,
-					"network":             "tcp",
-					"tls":                 true,
-					"udp":                 true,
-					"flow":                "xtls-rprx-vision",
-					"servername":          serverName,
+					"name":       name,
+					"type":       "vless",
+					"server":     nodeAddr,
+					"port":       in.ListenPort,
+					"uuid":       user.UUID,
+					"network":    "tcp",
+					"tls":        true,
+					"udp":        true,
+					"flow":       "xtls-rprx-vision",
+					"servername": serverName,
 					"reality-opts": map[string]any{
 						"public-key": pubKey,
 						"short-id":   shortID,
@@ -247,15 +259,15 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				}
 
 				p := map[string]any{
-					"name":                name,
-					"type":                "vless",
-					"server":              nodeAddr,
-					"port":                in.ListenPort,
-					"uuid":                user.UUID,
-					"network":             "grpc",
-					"tls":                 true,
-					"udp":                 true,
-					"servername":          serverName,
+					"name":       name,
+					"type":       "vless",
+					"server":     nodeAddr,
+					"port":       in.ListenPort,
+					"uuid":       user.UUID,
+					"network":    "grpc",
+					"tls":        true,
+					"udp":        true,
+					"servername": serverName,
 					"reality-opts": map[string]any{
 						"public-key": pubKey,
 						"short-id":   shortID,
@@ -352,15 +364,14 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 // generateSingboxJSON 生成 Sing-box 官方 JSON 配置
 func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 	var outbounds []map[string]any
-	var outTags []string
 
 	for _, n := range nodes {
 		nodeAddr := resolveNodeAddress(&n, c)
 		if nodeAddr == "" {
 			continue
 		}
-		var inbounds []common.InboundConfig
-		if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
+		inbounds := resolveInbounds(&n)
+		if len(inbounds) == 0 {
 			continue
 		}
 
@@ -401,7 +412,6 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					},
 				}
 				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
 
 			case "grpc-reality":
 				tag := fmt.Sprintf("%s-gRPC-Reality", n.Name)
@@ -441,7 +451,6 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					},
 				}
 				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
 
 			case "hysteria2":
 				tag := fmt.Sprintf("%s-Hy2", n.Name)
@@ -463,26 +472,24 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					},
 				}
 				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
 
 			case "tuic":
 				tag := fmt.Sprintf("%s-TUIC", n.Name)
 				out := map[string]any{
-					"type":        "tuic",
-					"tag":         tag,
-					"server":      nodeAddr,
-					"server_port": in.ListenPort,
-					"uuid":        user.UUID,
-					"password":    user.UUID,
+					"type":               "tuic",
+					"tag":                tag,
+					"server":             nodeAddr,
+					"server_port":        in.ListenPort,
+					"uuid":               user.UUID,
+					"password":           user.UUID,
 					"congestion_control": "bbr",
 					"tls": map[string]any{
-						"enabled":     true,
-						"alpn":        []string{"h3"},
-						"insecure":    true,
+						"enabled":  true,
+						"alpn":     []string{"h3"},
+						"insecure": true,
 					},
 				}
 				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
 
 			case "anytls":
 				tag := fmt.Sprintf("%s-AnyTLS", n.Name)
@@ -503,7 +510,6 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					},
 				}
 				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
 			}
 		}
 	}

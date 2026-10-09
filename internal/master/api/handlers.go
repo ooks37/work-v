@@ -98,8 +98,10 @@ func HandleLogin(c *gin.Context) {
 		return
 	}
 
-	// 设置安全 Cookie (方便直接浏览器鉴权)
-	c.SetCookie("workv_token", token, cookieMaxAge, "/", "", false, true)
+	// 设置安全 Cookie (方便直接浏览器鉴权; 反代终止 TLS 时依据 X-Forwarded-Proto 判定 Secure)
+	isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("workv_token", token, cookieMaxAge, "/", "", isHTTPS, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
@@ -180,12 +182,18 @@ func HandleSetSafeEntrance(c *gin.Context) {
 
 	if req.SafePath != "" {
 		middleware.SetSafePath(req.SafePath)
-		_, newPath := middleware.GetSafePath()
-		model.DB.Save(&model.SystemSetting{
-			Key:       "safe_path",
-			Value:     newPath,
-			UpdatedAt: time.Now(),
-		})
+		enabledNow, newPath := middleware.GetSafePath()
+		if enabledNow {
+			model.DB.Save(&model.SystemSetting{
+				Key:       "safe_path",
+				Value:     newPath,
+				UpdatedAt: time.Now(),
+			})
+			_ = model.SetSetting("safe_entry_enabled", "1")
+		} else {
+			// "/" 或空串代表关闭安全入口: 必须显式落库开关, 否则重启后会被默认值重新打开
+			_ = model.SetSetting("safe_entry_enabled", "0")
+		}
 	}
 
 	if req.Domain != "" {
@@ -357,10 +365,23 @@ func HandleUpdateNode(c *gin.Context) {
 	c.JSON(http.StatusOK, node)
 }
 
-// HandleDeleteNode 删除节点
+// HandleDeleteNode 删除节点 (同时主动断开长连)
+// 历史实现只软删记录: 被删节点依然连着长连, sing-box 带着最后一份配置继续为用户转发流量,
+// 心跳更新打在已软删的行上静默失效, 推送配置也永远报"节点不存在"。
 func HandleDeleteNode(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	model.DB.Delete(&model.Node{}, id)
+	var node model.Node
+	if err := model.DB.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		return
+	}
+
+	// 先断连再落库, 杜绝"记录已删、进程仍在服务"的孤儿节点
+	hub.GlobalHub.KickNode(node.ID)
+	if err := model.DB.Delete(&node).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除节点失败: " + err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
@@ -385,9 +406,9 @@ func HandleGetUsers(c *gin.Context) {
 // HandleCreateUser 创建订阅用户
 func HandleCreateUser(c *gin.Context) {
 	var req struct {
-		Username     string `json:"username" binding:"required"`
-		TrafficLimitGB int64 `json:"traffic_limit_gb"` // GB
-		ExpireDays   int64  `json:"expire_days"`      // 天数
+		Username       string `json:"username" binding:"required"`
+		TrafficLimitGB int64  `json:"traffic_limit_gb"` // GB
+		ExpireDays     int64  `json:"expire_days"`      // 天数
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供有效用户名"})
@@ -503,7 +524,8 @@ func HandleGetNodeLinks(c *gin.Context) {
 	var user model.User
 	userUUID := "11111111-2222-3333-4444-555555555555"
 	username := "default_user"
-	if err := model.DB.Where("status = ?", "active").First(&user).Error; err == nil {
+	// 固定取最早创建的活跃用户, 避免每次刷新示范链接指向不同用户
+	if err := model.DB.Where("status = ?", "active").Order("id asc").First(&user).Error; err == nil {
 		userUUID = user.UUID
 		username = user.Username
 	}
@@ -520,10 +542,9 @@ func HandleGetNodeLinks(c *gin.Context) {
 }
 
 var (
-	sbVersionCache  string
-	sbLatestCache   string
-	sbCacheTime     time.Time
-	sbCacheMu       sync.Mutex
+	sbLatestCache string
+	sbCacheTime   time.Time
+	sbCacheMu     sync.Mutex
 )
 
 // HandleGetSingboxVersion 获取本地与远端 sing-box 最新版本 (带 1 小时缓存防 GitHub 403 限流)
@@ -642,7 +663,8 @@ func HandleUpgradeSingbox(c *gin.Context) {
 		_ = exec.Command("chmod", "755", targetBin).Run()
 
 		// 重启服务生效
-		_ = exec.Command("systemctl", "restart", "work-v-master").Run()
+		// 主控自身不运行 sing-box, 而且正在处理本次请求 —— 重启它会打断响应并制造无谓停机。
+		// 只有同机部署的 Agent 需要重载新内核。
 		_ = exec.Command("systemctl", "restart", "work-v-agent").Run()
 	}()
 

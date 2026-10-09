@@ -2,12 +2,18 @@ package runner
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"os/exec"
@@ -92,7 +98,8 @@ func (r *SingboxRunner) ApplyConfig(payload *common.NodeConfigPayload) error {
 		return fmt.Errorf("生成 sing-box 配置失败: %w", err)
 	}
 
-	if err := os.WriteFile(tmpFile, sbJSON, 0644); err != nil {
+	// 该文件含 Reality 私钥与全部用户 UUID, 仅限属主可读
+	if err := os.WriteFile(tmpFile, sbJSON, 0600); err != nil {
 		return fmt.Errorf("写入临时配置文件失败: %w", err)
 	}
 
@@ -124,6 +131,12 @@ func (r *SingboxRunner) restartProcess(configFile string) error {
 		r.running = false
 	}
 
+	// 进程被替换意味着 Clash API 的连接表与累计计数器都已归零, 必须同步清空本地快照,
+	// 否则新进程的 total 永远小于旧快照, 增量判断长期失效 (漏计费)。
+	r.lastConns = make(map[string]connTrafficSnap)
+	r.totalUpSnap = 0
+	r.totalDownSnap = 0
+
 	cmd := exec.Command(r.singboxPath, "run", "-c", configFile)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -136,14 +149,19 @@ func (r *SingboxRunner) restartProcess(configFile string) error {
 	r.running = true
 	log.Printf("[Sing-box] 进程启动成功, PID=%d", cmd.Process.Pid)
 
-	// 后台等待协程
-	go func() {
-		_ = cmd.Wait()
+	// 后台等待协程: 只允许"自己这一轮"的进程修改运行状态。
+	// 历史实现无条件置 running=false, 旧进程被 kill 后其 watcher 会在新进程启动完成之后把
+	// 状态改回未运行 -> 面板显示"内核已停止", 且 ApplyConfig 的幂等短路永久失效,
+	// 于是每次下发配置都要重启内核、切断全部用户连接。
+	go func(c *exec.Cmd) {
+		_ = c.Wait()
 		r.mu.Lock()
-		r.running = false
+		if r.cmd == c {
+			r.running = false
+		}
 		r.mu.Unlock()
-		log.Println("[Sing-box] 进程已退出")
-	}()
+		log.Printf("[Sing-box] 进程已退出 (PID=%d)", c.Process.Pid)
+	}(cmd)
 
 	return nil
 }
@@ -254,6 +272,7 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 
 	userDeltas := make(map[string]*common.UserDeltaTraffic)
 	currConnIDs := make(map[string]bool)
+	unattributed := 0
 
 	for _, c := range data.Connections {
 		currConnIDs[c.ID] = true
@@ -275,6 +294,8 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 			deltaDown = 0
 		}
 
+		// 只按连接元数据归属流量。历史实现在识别不出用户时把流量记给 activeUsers[0],
+		// 会让排在第一位的用户替所有人(以及内部连接)背流量, 被误判超额熔断。
 		targetUUID := ""
 		if c.Metadata.User != "" {
 			for _, u := range activeUsers {
@@ -284,8 +305,8 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 				}
 			}
 		}
-		if targetUUID == "" && len(activeUsers) > 0 {
-			targetUUID = activeUsers[0].UUID
+		if targetUUID == "" {
+			unattributed++
 		}
 
 		r.lastConns[c.ID] = connTrafficSnap{
@@ -309,6 +330,10 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 		}
 	}
 
+	if unattributed > 0 {
+		log.Printf("[Sing-box] 本轮有 %d 个连接无法归属到具体用户, 其流量未计入任何配额", unattributed)
+	}
+
 	// 全局增量兜底
 	if data.UploadTotal > r.totalUpSnap || data.DownloadTotal > r.totalDownSnap {
 		globalDeltaUp := data.UploadTotal - r.totalUpSnap
@@ -316,13 +341,9 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 		r.totalUpSnap = data.UploadTotal
 		r.totalDownSnap = data.DownloadTotal
 
-		if len(userDeltas) == 0 && (globalDeltaUp > 0 || globalDeltaDown > 0) && len(activeUsers) > 0 {
-			primaryUUID := activeUsers[0].UUID
-			userDeltas[primaryUUID] = &common.UserDeltaTraffic{
-				UUID: primaryUUID,
-				Up:   globalDeltaUp,
-				Down: globalDeltaDown,
-			}
+		// 只推进快照, 绝不把无法归属的增量硬塞给某个用户
+		if len(userDeltas) == 0 && (globalDeltaUp > 0 || globalDeltaDown > 0) {
+			log.Printf("[Sing-box] 本轮有 %d 字节全局流量无法归属到任何用户, 已跳过计费", globalDeltaUp+globalDeltaDown)
 		}
 	}
 
@@ -335,33 +356,87 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 	return result
 }
 
-func getOrCreateCert(configDir string) (string, string) {
+// getOrCreateCert 返回可用的证书路径。第三个返回值表示证书是否真的可用:
+// 历史实现忽略 openssl 的错误并无条件返回路径, 于是缺少 openssl / 目录不可写时,
+// 配置里会引用不存在的证书文件 -> sing-box check 失败 -> 整份配置(含 VLESS)都下发不了。
+func getOrCreateCert(configDir string) (certPath string, keyPath string, ok bool) {
 	// 1. 检查节点本地证书
 	localCert := filepath.Join(configDir, "cert.pem")
 	localKey := filepath.Join(configDir, "key.pem")
-	if _, err := os.Stat(localCert); err == nil {
-		if _, err := os.Stat(localKey); err == nil {
-			return localCert, localKey
-		}
+	if fileExists(localCert) && fileExists(localKey) {
+		return localCert, localKey, true
 	}
 
 	// 2. 检查系统通用 Let's Encrypt 证书目录
 	matches, _ := filepath.Glob("/etc/letsencrypt/live/*/fullchain.pem")
 	if len(matches) > 0 {
 		dir := filepath.Dir(matches[0])
-		keyPath := filepath.Join(dir, "privkey.pem")
-		if _, err := os.Stat(keyPath); err == nil {
-			return matches[0], keyPath
+		kp := filepath.Join(dir, "privkey.pem")
+		if fileExists(kp) {
+			return matches[0], kp, true
 		}
 	}
 
-	// 3. 自动生成自签证书
+	// 3. 自动生成自签证书 (纯 Go 实现, 不依赖节点是否安装 openssl)
 	_ = os.MkdirAll(configDir, 0755)
-	_ = exec.Command("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-		"-sha256", "-keyout", localKey, "-out", localCert,
-		"-days", "3650", "-subj", "/CN=gateway.icloud.com").Run()
+	if err := ensureSelfSignedCert(localCert, localKey); err != nil {
+		log.Printf("[Sing-box] ⚠️ 自签证书生成失败(目录不可写?): %v", err)
+		return "", "", false
+	}
+	return localCert, localKey, true
+}
 
-	return localCert, localKey
+// ensureSelfSignedCert 生成 ECDSA P-256 自签证书。
+// 不依赖 openssl 命令行: 精简系统上它通常不存在, 而证书缺失会让整份 sing-box 配置校验失败。
+func ensureSelfSignedCert(certPath, keyPath string) error {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	tmpl := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "gateway.icloud.com", Organization: []string{"Work-V"}},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		DNSNames:              []string{"gateway.icloud.com"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		return err
+	}
+	if err := writePEM(certPath, "CERTIFICATE", der); err != nil {
+		return err
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return err
+	}
+	return writePEM(keyPath, "EC PRIVATE KEY", keyDER)
+}
+
+func writePEM(path, blockType string, der []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return pem.Encode(f, &pem.Block{Type: blockType, Bytes: der})
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }
 
 // formatRealityKey 确保 Reality 密钥为 Base64 URL 格式 (兼容历史 64 字节 Hex 格式)
@@ -381,7 +456,10 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 		clashSecret = secretOptional[0]
 	}
 	inbounds := make([]map[string]any, 0)
-	certPath, keyPath := getOrCreateCert(configDir)
+	certPath, keyPath, certOK := getOrCreateCert(configDir)
+	if !certOK {
+		log.Println("[Sing-box] ⚠️ 未取得可用证书, 本次将跳过 Hysteria2 / TUIC / AnyTLS 入站(Reality 不受影响)")
+	}
 
 	for _, in := range payload.Inbounds {
 		if !in.Enabled {
@@ -486,6 +564,10 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 			inbounds = append(inbounds, inbound)
 
 		case "hysteria2":
+			if !certOK {
+				log.Printf("[Sing-box] 跳过 %s 入站: 证书不可用", in.Tag)
+				continue
+			}
 			users := make([]map[string]any, 0)
 			for _, u := range payload.Users {
 				if u.Status == "active" {
@@ -511,6 +593,10 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 			inbounds = append(inbounds, inbound)
 
 		case "tuic":
+			if !certOK {
+				log.Printf("[Sing-box] 跳过 %s 入站: 证书不可用", in.Tag)
+				continue
+			}
 			users := make([]map[string]any, 0)
 			for _, u := range payload.Users {
 				if u.Status == "active" {
@@ -523,11 +609,11 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 			}
 
 			inbound := map[string]any{
-				"type":        "tuic",
-				"tag":         in.Tag,
-				"listen":      "::",
-				"listen_port": in.ListenPort,
-				"users":       users,
+				"type":               "tuic",
+				"tag":                in.Tag,
+				"listen":             "::",
+				"listen_port":        in.ListenPort,
+				"users":              users,
 				"congestion_control": "bbr",
 				"zero_rtt_handshake": false,
 				"heartbeat":          "10s",
@@ -541,6 +627,10 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 			inbounds = append(inbounds, inbound)
 
 		case "anytls":
+			if !certOK {
+				log.Printf("[Sing-box] 跳过 %s 入站: 证书不可用", in.Tag)
+				continue
+			}
 			users := make([]map[string]any, 0)
 			for _, u := range payload.Users {
 				if u.Status == "active" {
@@ -551,6 +641,7 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 				}
 			}
 
+			// 服务端 TLS 必须提供证书; insecure 只是客户端选项, 放在服务端会导致配置校验失败
 			inbound := map[string]any{
 				"type":        "anytls",
 				"tag":         in.Tag,
@@ -558,8 +649,9 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 				"listen_port": in.ListenPort,
 				"users":       users,
 				"tls": map[string]any{
-					"enabled":  true,
-					"insecure": true,
+					"enabled":          true,
+					"certificate_path": certPath,
+					"key_path":         keyPath,
 				},
 			}
 			inbounds = append(inbounds, inbound)
