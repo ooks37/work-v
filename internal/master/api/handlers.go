@@ -3,9 +3,16 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"work-v/internal/master/hub"
@@ -455,4 +462,303 @@ func HandleDeleteUser(c *gin.Context) {
 		model.DB.Delete(&user)
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+}
+
+// HandleGetNodeLinks 获取指定节点的客户端直连协议链接与配置 (支持全 5 大协议直显与二维码)
+func HandleGetNodeLinks(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var node model.Node
+	if err := model.DB.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		return
+	}
+
+	// 查找系统默认活跃用户或使用示范 UUID
+	var user model.User
+	userUUID := "11111111-2222-3333-4444-555555555555"
+	username := "default_user"
+	if err := model.DB.Where("status = ?", "active").First(&user).Error; err == nil {
+		userUUID = user.UUID
+		username = user.Username
+	}
+
+	links := service.GenerateNodeShareLinks(&node, userUUID, username)
+	c.JSON(http.StatusOK, gin.H{
+		"node_id":   node.ID,
+		"node_name": node.Name,
+		"address":   node.Address,
+		"user":      username,
+		"uuid":      userUUID,
+		"links":     links,
+	})
+}
+
+var (
+	sbVersionCache  string
+	sbLatestCache   string
+	sbCacheTime     time.Time
+	sbCacheMu       sync.Mutex
+)
+
+// HandleGetSingboxVersion 获取本地与远端 sing-box 最新版本 (带 1 小时缓存防 GitHub 403 限流)
+func HandleGetSingboxVersion(c *gin.Context) {
+	curVer := "未安装"
+	for _, p := range []string{"/usr/local/bin/sing-box", "sing-box"} {
+		if out, err := exec.Command(p, "version").CombinedOutput(); err == nil {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) > 0 {
+				curVer = strings.TrimSpace(lines[0])
+				break
+			}
+		}
+	}
+
+	sbCacheMu.Lock()
+	defer sbCacheMu.Unlock()
+
+	latestVer := "1.13.12"
+	if time.Since(sbCacheTime) < time.Hour && sbLatestCache != "" {
+		latestVer = sbLatestCache
+	} else {
+		client := &http.Client{Timeout: 5 * time.Second}
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/SagerNet/sing-box/releases/latest", nil)
+		req.Header.Set("User-Agent", "Work-V-Master")
+		if resp, err := client.Do(req); err == nil && resp.StatusCode == 200 {
+			var res struct {
+				TagName string `json:"tag_name"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&res); err == nil && res.TagName != "" {
+				latestVer = strings.TrimPrefix(res.TagName, "v")
+				sbLatestCache = latestVer
+				sbCacheTime = time.Now()
+			}
+			resp.Body.Close()
+		}
+	}
+
+	updateAvailable := false
+	if curVer != "未安装" && latestVer != "" && !strings.Contains(curVer, latestVer) {
+		updateAvailable = true
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"current_version":  curVer,
+		"latest_version":   latestVer,
+		"update_available": updateAvailable,
+	})
+}
+
+// HandleUpgradeSingbox 在线一键升级 sing-box 官方内核 (多源智能兜底与自动备份)
+func HandleUpgradeSingbox(c *gin.Context) {
+	go func() {
+		arch := runtime.GOARCH
+		if arch != "amd64" && arch != "arm64" {
+			arch = "amd64"
+		}
+
+		ver := "1.13.12"
+		sbCacheMu.Lock()
+		if sbLatestCache != "" {
+			ver = sbLatestCache
+		}
+		sbCacheMu.Unlock()
+
+		url := fmt.Sprintf("https://github.com/SagerNet/sing-box/releases/download/v%s/sing-box-%s-linux-%s.tar.gz", ver, ver, arch)
+		mirrorURL := fmt.Sprintf("https://ghfast.top/%s", url)
+
+		tmpDir := fmt.Sprintf("/tmp/singbox-update-%d", time.Now().Unix())
+		os.MkdirAll(tmpDir, 0755)
+		defer os.RemoveAll(tmpDir)
+
+		tarFile := filepath.Join(tmpDir, "sb.tar.gz")
+
+		// 优先主源，失败镜像源
+		dlCmd := exec.Command("curl", "-fsSL", "--connect-timeout", "10", "--retry", "2", "-o", tarFile, url)
+		if err := dlCmd.Run(); err != nil {
+			dlMirror := exec.Command("curl", "-fsSL", "--connect-timeout", "15", "--retry", "3", "-o", tarFile, mirrorURL)
+			_ = dlMirror.Run()
+		}
+
+		// 解压并替换
+		untarCmd := exec.Command("tar", "-xzf", tarFile, "-C", tmpDir)
+		if err := untarCmd.Run(); err != nil {
+			return
+		}
+
+		// 查找解压出的可执行文件
+		findCmd := exec.Command("sh", "-c", fmt.Sprintf("find %s -type f -name sing-box | head -n 1", tmpDir))
+		out, err := findCmd.Output()
+		if err != nil || len(out) == 0 {
+			return
+		}
+		newBin := strings.TrimSpace(string(out))
+
+		// 验证版本输出
+		if err := exec.Command(newBin, "version").Run(); err != nil {
+			return
+		}
+
+		// 备份旧版本
+		targetBin := "/usr/local/bin/sing-box"
+		if _, err := os.Stat(targetBin); err == nil {
+			bak := fmt.Sprintf("%s.bak.%d", targetBin, time.Now().Unix())
+			_ = exec.Command("cp", "-f", targetBin, bak).Run()
+		}
+
+		_ = exec.Command("cp", "-f", newBin, targetBin).Run()
+		_ = exec.Command("chmod", "755", targetBin).Run()
+
+		// 重启服务生效
+		_ = exec.Command("systemctl", "restart", "work-v-master").Run()
+		_ = exec.Command("systemctl", "restart", "work-v-agent").Run()
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "内核升级任务已在后台启动，下载校验通过后将自动热重载！",
+	})
+}
+
+// ListeningPort 开放端口详情
+type ListeningPort struct {
+	Port    string `json:"port"`
+	Proto   string `json:"proto"`
+	Process string `json:"process"`
+	Status  string `json:"status"`
+}
+
+// HandleGetOpenPorts 扫描当前机器所有正在监听的端口与网络服务
+func HandleGetOpenPorts(c *gin.Context) {
+	cmd := exec.Command("ss", "-lntup")
+	out, err := cmd.CombinedOutput()
+	ports := make([]ListeningPort, 0)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"ports": ports})
+		return
+	}
+
+	lines := strings.Split(string(out), "\n")
+	seen := make(map[string]bool)
+	for i, line := range lines {
+		if i == 0 || strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		proto := strings.ToUpper(fields[0])
+		local := fields[4]
+
+		port := ""
+		if idx := strings.LastIndex(local, ":"); idx != -1 {
+			port = local[idx+1:]
+		}
+		if port == "" || port == "*" {
+			continue
+		}
+
+		process := "系统服务"
+		if len(fields) >= 7 {
+			procPart := fields[6]
+			if strings.Contains(procPart, `users:(("`) {
+				start := strings.Index(procPart, `users:(("`) + 9
+				end := strings.Index(procPart[start:], `"`)
+				if end != -1 {
+					process = procPart[start : start+end]
+				}
+			}
+		}
+
+		key := fmt.Sprintf("%s/%s", port, proto)
+		if !seen[key] {
+			seen[key] = true
+			ports = append(ports, ListeningPort{
+				Port:    port,
+				Proto:   proto,
+				Process: process,
+				Status:  "LISTEN",
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ports": ports,
+	})
+}
+
+// HandleGetDiagnostic 一键生成系统环境、资源、协议状态与网络诊断报告 (对标 iwantrun 核心排错工具)
+func HandleGetDiagnostic(c *gin.Context) {
+	osRel := "Linux"
+	if data, err := os.ReadFile("/etc/os-release"); err == nil {
+		for _, l := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(l, "PRETTY_NAME=") {
+				osRel = strings.Trim(strings.TrimPrefix(l, "PRETTY_NAME="), `"`)
+				break
+			}
+		}
+	}
+
+	kernel := "未知"
+	if out, err := exec.Command("uname", "-r").Output(); err == nil {
+		kernel = strings.TrimSpace(string(out))
+	}
+
+	curVer := "未检测到"
+	for _, p := range []string{"/usr/local/bin/sing-box", "sing-box"} {
+		if out, err := exec.Command(p, "version").CombinedOutput(); err == nil {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) > 0 {
+				curVer = strings.TrimSpace(lines[0])
+				break
+			}
+		}
+	}
+
+	bbrStatus := "已开启"
+	if out, err := exec.Command("sysctl", "net.ipv4.tcp_congestion_control").CombinedOutput(); err == nil {
+		if !strings.Contains(string(out), "bbr") {
+			bbrStatus = "未开启 (默认 " + strings.TrimSpace(string(out)) + ")"
+		}
+	}
+
+	var totalNodes, onlineNodes int64
+	model.DB.Model(&model.Node{}).Count(&totalNodes)
+	model.DB.Model(&model.Node{}).Where("status = ?", "online").Count(&onlineNodes)
+
+	var totalUsers int64
+	model.DB.Model(&model.User{}).Count(&totalUsers)
+
+	// 采集最近 30 行日志
+	logCmd := exec.Command("journalctl", "-u", "work-v-master", "-n", "25", "--no-pager")
+	logOut, _ := logCmd.CombinedOutput()
+	recentLogs := string(logOut)
+	if strings.TrimSpace(recentLogs) == "" {
+		recentLogs = "暂无系统异常日志"
+	}
+
+	diagReport := fmt.Sprintf(`===== Work-V 分布式网络中枢系统综合诊断报告 =====
+操作系统: %s
+系统内核: %s
+架构类型: %s
+TCP BBR 加速: %s
+Sing-box 内核: %s
+主控服务状态: 🟢 运行中 (work-v-master)
+受控节点总数: %d (在线: %d, 离线: %d)
+系统用户总数: %d
+诊断生成时间: %s
+
+===== 最近运行事件日志 =====
+%s
+==================================================`,
+		osRel, kernel, runtime.GOARCH, bbrStatus, curVer, totalNodes, onlineNodes, totalNodes-onlineNodes, totalUsers,
+		time.Now().Format("2006-01-02 15:04:05"), recentLogs)
+
+	c.JSON(http.StatusOK, gin.H{
+		"os":          osRel,
+		"kernel":      kernel,
+		"arch":        runtime.GOARCH,
+		"bbr":         bbrStatus,
+		"singbox_ver": curVer,
+		"report":      diagReport,
+	})
 }

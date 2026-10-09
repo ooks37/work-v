@@ -166,10 +166,20 @@
               <span>用户订阅</span>
               <span class="text-xs px-1.5 py-0.2 rounded-full bg-slate-700 text-slate-300">{{ users.length }}</span>
             </button>
+            <button @click="openPortsModal()" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-900/50 transition flex items-center gap-1">
+              <span>🛡️ 开放端口</span>
+            </button>
+            <button @click="openDiagModal()" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-900/50 transition flex items-center gap-1">
+              <span>📋 系统诊断</span>
+            </button>
           </nav>
         </div>
 
         <div class="flex items-center gap-3">
+          <button @click="openSingboxModal()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition">
+            <span>📦 内核: {{ (singboxInfo.current_version || 'sing-box').split(' ')[0] }}</span>
+            <span v-if="singboxInfo.update_available" class="w-2 h-2 rounded-full bg-amber-400 animate-ping" title="发现新版本"></span>
+          </button>
           <button @click="showSafeModal = true" class="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition">
             <span>🛡️ 安全路径: {{ safeEntrance.safe_path || '已关闭' }}</span>
           </button>
@@ -317,10 +327,13 @@
               <div class="mt-5 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs">
                 <div class="flex items-center gap-2">
                   <button @click="quickCopyCommand(node)" class="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 border border-emerald-500/20 transition active:scale-95">
-                    <span>⚡ 一键复制命令</span>
+                    <span>⚡ 复制纳管命令</span>
+                  </button>
+                  <button @click="openShareModal(node)" class="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 border border-cyan-500/20 transition active:scale-95">
+                    <span>📱 协议分享 & 二维码</span>
                   </button>
                   <button @click="openInstallModal(node)" class="text-slate-400 hover:text-white font-medium flex items-center gap-1 transition">
-                    <span>更多模式</span>
+                    <span>模式</span>
                   </button>
                 </div>
                 <div class="flex items-center gap-2">
@@ -713,6 +726,186 @@
       </div>
     </div>
 
+    <!-- 弹窗: 节点分享与二维码中心 (对标 iwantrun 核心功能) -->
+    <div v-if="shareModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-2xl w-full p-6 rounded-3xl border border-slate-800 shadow-2xl max-h-[90vh] flex flex-col">
+        <div class="flex items-start justify-between pb-4 border-b border-slate-800">
+          <div>
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>📱 节点直连协议与二维码中心</span>
+              <span class="text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono">{{ shareModal.node?.name }}</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">支持 5 大顶级防封协议 · 手机小火箭 / Sing-box / v2rayNG / Hiddify 扫码直连</p>
+          </div>
+          <button @click="shareModal.show = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+        </div>
+
+        <div v-if="shareModal.loading" class="py-12 text-center text-slate-400">
+          <span class="animate-pulse">正在提取节点专属加密链接与协议配置...</span>
+        </div>
+
+        <div v-else class="flex-1 overflow-y-auto py-4 space-y-4">
+          <div v-if="shareModal.links.length === 0" class="text-center py-8 text-slate-400 text-xs">
+            当前节点尚未探测到公网 IP 或未生成有效入站协议
+          </div>
+          <div v-for="item in shareModal.links" :key="item.protocol" class="p-4 bg-slate-900/80 rounded-2xl border border-slate-800 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-bold text-white">{{ item.name }}</span>
+                <span class="text-[11px] px-2 py-0.5 rounded-md font-mono font-semibold"
+                  :class="item.port_type === 'UDP' ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20' : 'bg-purple-500/10 text-purple-300 border border-purple-500/20'">
+                  {{ item.port }}/{{ item.port_type }}
+                </span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button @click="openQr(item.link, item.name + ' 导入二维码')" class="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 font-semibold text-xs border border-cyan-500/20 transition active:scale-95">
+                  📱 二维码
+                </button>
+                <button @click="copyText(item.link)" class="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 font-semibold text-xs border border-emerald-500/20 transition active:scale-95">
+                  📋 复制链接
+                </button>
+              </div>
+            </div>
+            <p class="text-xs text-slate-400">{{ item.description }}</p>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-slate-800/80 font-mono text-[11px] text-slate-300 break-all select-all">
+              {{ item.link }}
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-800 flex justify-end">
+          <button @click="shareModal.show = false" class="px-5 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-700">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗: Sing-Box 内核在线检测与升级 -->
+    <div v-if="showSingboxModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-md w-full p-6 rounded-3xl border border-slate-800 shadow-2xl">
+        <div class="flex items-start justify-between pb-4 border-b border-slate-800">
+          <div>
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>📦 Sing-box 官方内核管理</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">检测 SagerNet/sing-box 最新 Release 并一键升级</p>
+          </div>
+          <button @click="showSingboxModal = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+        </div>
+
+        <div class="py-4 space-y-4 text-sm">
+          <div class="p-3.5 bg-slate-900 rounded-2xl border border-slate-800 space-y-2">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-slate-400">当前安装版本:</span>
+              <span class="font-mono font-bold text-white">{{ singboxInfo.current_version || '检测中...' }}</span>
+            </div>
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-slate-400">官方最新发布:</span>
+              <span class="font-mono font-bold text-emerald-400">v{{ singboxInfo.latest_version || '1.13.12' }}</span>
+            </div>
+            <div class="flex justify-between items-center text-xs pt-1 border-t border-slate-800">
+              <span class="text-slate-400">状态评估:</span>
+              <span v-if="singboxInfo.update_available" class="text-amber-400 font-semibold flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> 发现新版本可升级
+              </span>
+              <span v-else class="text-emerald-400 font-semibold">🟢 已是最新稳定版</span>
+            </div>
+          </div>
+
+          <div class="text-xs text-slate-400 space-y-1 bg-slate-900/50 p-3 rounded-xl border border-slate-800/60">
+            <p>• 升级过程会在后台全自动完成下载、校验与解压。</p>
+            <p>• 自动备份当前运行版本，升级完成后热重载生效。</p>
+            <p>• 内置国内 CDN 镜像加速兜底，无惧网络丢包或超时。</p>
+          </div>
+
+          <div class="pt-2 flex justify-end gap-3">
+            <button @click="fetchSingboxVersion(true)" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-700">重新检测</button>
+            <button @click="upgradeSingboxCore" class="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 active:scale-95 transition">
+              <span>⚡ 一键升级内核</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗: 开放端口与防火墙探测器 -->
+    <div v-if="showPortsModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-xl w-full p-6 rounded-3xl border border-slate-800 shadow-2xl max-h-[85vh] flex flex-col">
+        <div class="flex items-start justify-between pb-4 border-b border-slate-800">
+          <div>
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>🛡️ 系统开放端口与防火墙状态</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">实时扫描 Linux 内核监听端口 (ss -lntup) 与防封安全组</p>
+          </div>
+          <button @click="showPortsModal = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto py-4 space-y-4">
+          <div class="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-300 text-xs space-y-1">
+            <p class="font-bold">🔥 VPS 运营商安全组放行提醒：</p>
+            <p>• <strong>TCP 协议</strong>（VLESS Reality 443、gRPC 2053、Nginx 80）必须在云厂商控制台放行 <strong>TCP</strong> 端口。</p>
+            <p>• <strong>UDP 协议</strong>（Hysteria 2 8443、TUIC 8444）必须在云厂商控制台放行 <strong>UDP</strong> 端口。</p>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead>
+                <tr class="text-slate-400 border-b border-slate-800">
+                  <th class="pb-2 font-semibold">端口号</th>
+                  <th class="pb-2 font-semibold">协议类型</th>
+                  <th class="pb-2 font-semibold">监听服务 / 进程</th>
+                  <th class="pb-2 font-semibold">状态</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/60 font-mono">
+                <tr v-for="p in portsList" :key="p.port + p.proto" class="hover:bg-slate-900/50">
+                  <td class="py-2.5 font-bold text-white">{{ p.port }}</td>
+                  <td class="py-2.5">
+                    <span :class="p.proto === 'UDP' ? 'text-amber-400' : 'text-cyan-400'">{{ p.proto }}</span>
+                  </td>
+                  <td class="py-2.5 text-slate-300 font-sans">{{ p.process }}</td>
+                  <td class="py-2.5 text-emerald-400">🟢 {{ p.status }}</td>
+                </tr>
+                <tr v-if="portsList.length === 0">
+                  <td colspan="4" class="py-6 text-center text-slate-500">正在扫描监听端口...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-800 flex justify-end">
+          <button @click="showPortsModal = false" class="px-5 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-700">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗: 系统综合诊断与排错报告 -->
+    <div v-if="showDiagModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-2xl w-full p-6 rounded-3xl border border-slate-800 shadow-2xl max-h-[85vh] flex flex-col">
+        <div class="flex items-start justify-between pb-4 border-b border-slate-800">
+          <div>
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>📋 系统综合诊断与排错报告</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">一键生成服务器环境、网络、内核及节点运行健康度报告</p>
+          </div>
+          <button @click="showDiagModal = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto py-4">
+          <pre class="bg-slate-950 p-4 rounded-2xl border border-slate-800 font-mono text-xs text-emerald-300 whitespace-pre-wrap select-all leading-relaxed">{{ diagData.report || '正在采集系统诊断信息...' }}</pre>
+        </div>
+
+        <div class="pt-4 border-t border-slate-800 flex justify-end gap-3">
+          <button @click="copyText(diagData.report)" class="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 active:scale-95 transition">
+            <span>📋 一键复制全部诊断日志</span>
+          </button>
+          <button @click="showDiagModal = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-700">关闭</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <script>
@@ -1081,11 +1274,89 @@
           return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
         };
 
+        // 节点直连分享与二维码中心 (借鉴 iwantrun 最佳实践)
+        const shareModal = reactive({ show: false, node: null, links: [], loading: false });
+        const openShareModal = async (node) => {
+          shareModal.show = true;
+          shareModal.node = node;
+          shareModal.loading = true;
+          shareModal.links = [];
+          try {
+            const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/links`);
+            shareModal.links = res.links || [];
+          } catch (err) {
+            addToast('加载协议链接失败: ' + err.message, 'error');
+          } finally {
+            shareModal.loading = false;
+          }
+        };
+
+        // Sing-box 内核版本与在线升级 (借鉴 iwantrun 机制)
+        const singboxInfo = reactive({ current_version: '', latest_version: '', update_available: false });
+        const showSingboxModal = ref(false);
+        const fetchSingboxVersion = async () => {
+          try {
+            const data = await apiFetch('/api/v1/admin/singbox/version');
+            Object.assign(singboxInfo, data);
+          } catch (err) {
+            console.error('获取 sing-box 版本失败:', err);
+          }
+        };
+        const openSingboxModal = () => {
+          showSingboxModal.value = true;
+          fetchSingboxVersion();
+        };
+        const upgradeSingboxCore = async () => {
+          try {
+            const res = await apiFetch('/api/v1/admin/singbox/upgrade', { method: 'POST' });
+            addToast(res.message || '内核升级任务已启动！');
+            setTimeout(fetchSingboxVersion, 6000);
+          } catch (err) {
+            addToast(err.message, 'error');
+          }
+        };
+
+        // 开放端口与防火墙探测 (对标 iwantrun 开放端口视图)
+        const portsList = ref([]);
+        const showPortsModal = ref(false);
+        const fetchPorts = async () => {
+          try {
+            const res = await apiFetch('/api/v1/admin/system/ports');
+            portsList.value = res.ports || [];
+          } catch (err) {
+            console.error(err);
+          }
+        };
+        const openPortsModal = () => {
+          showPortsModal.value = true;
+          fetchPorts();
+        };
+
+        // 系统综合诊断报告 (对标 iwantrun 核心排错工具)
+        const diagData = reactive({ report: '', loading: false });
+        const showDiagModal = ref(false);
+        const fetchDiag = async () => {
+          diagData.loading = true;
+          try {
+            const res = await apiFetch('/api/v1/admin/system/diagnostic');
+            diagData.report = res.report || '';
+          } catch (err) {
+            diagData.report = '诊断报告获取失败: ' + err.message;
+          } finally {
+            diagData.loading = false;
+          }
+        };
+        const openDiagModal = () => {
+          showDiagModal.value = true;
+          fetchDiag();
+        };
+
         let poller = null;
         onMounted(() => {
           if (isLoggedIn.value) {
             fetchData();
             fetchSafeEntrance();
+            fetchSingboxVersion();
             poller = setInterval(fetchData, 4000);
           }
         });
@@ -1105,6 +1376,10 @@
           qrModal, openQr,
           showPassModal, passForm, changePassword,
           showSafeModal, safeEntrance, safePathInput, saveSafeEntrance,
+          shareModal, openShareModal,
+          singboxInfo, showSingboxModal, openSingboxModal, fetchSingboxVersion, upgradeSingboxCore,
+          portsList, showPortsModal, openPortsModal,
+          diagData, showDiagModal, openDiagModal,
           copyText, formatBytes, formatSpeed, formatDate,
           calculateUserTrafficPercent, getUserProgressColor, getUserStatusText, getUserStatusBadgeClass
         };

@@ -66,13 +66,27 @@ func (r *SingboxRunner) ApplyConfig(payload *common.NodeConfigPayload) error {
 	}
 
 	configFile := filepath.Join(r.configDir, "sing-box.json")
+	tmpFile := filepath.Join(r.configDir, fmt.Sprintf(".sing-box.%d.tmp", time.Now().UnixNano()))
 	sbJSON, err := generateSingboxJSON(payload)
 	if err != nil {
 		return fmt.Errorf("生成 sing-box 配置失败: %w", err)
 	}
 
-	if err := os.WriteFile(configFile, sbJSON, 0644); err != nil {
-		return fmt.Errorf("写入配置文件失败: %w", err)
+	if err := os.WriteFile(tmpFile, sbJSON, 0644); err != nil {
+		return fmt.Errorf("写入临时配置文件失败: %w", err)
+	}
+
+	// 校验配置合法性 (借鉴 iwantrun 安全原子替换机制)
+	checkCmd := exec.Command(r.singboxPath, "check", "-c", tmpFile)
+	if out, err := checkCmd.CombinedOutput(); err != nil {
+		os.Remove(tmpFile)
+		log.Printf("[Sing-box] ⚠️ 新配置语法校验未通过，维持原配置运行: %v (输出: %s)", err, string(out))
+		return fmt.Errorf("sing-box 配置语法校验未通过: %w", err)
+	}
+
+	// 原子替换
+	if err := os.Rename(tmpFile, configFile); err != nil {
+		_ = os.WriteFile(configFile, sbJSON, 0644)
 	}
 
 	r.currentHash = payload.ConfigHash
@@ -97,7 +111,6 @@ func (r *SingboxRunner) restartProcess(configFile string) error {
 		r.running = false
 		return fmt.Errorf("启动 sing-box 进程失败: %w", err)
 	}
-
 	r.cmd = cmd
 	r.running = true
 	log.Printf("[Sing-box] 进程启动成功, PID=%d", cmd.Process.Pid)
@@ -125,8 +138,6 @@ func (r *SingboxRunner) CutoffUser(userUUID string) {
 
 // CollectTraffic 获取各用户周期内的流量增量
 func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
-	// 这里通过本地 Clash API 或统计模块获取用量
-	// 针对演示与生产稳定，提供安全的心跳上报
 	return []common.UserDeltaTraffic{}
 }
 
@@ -141,7 +152,7 @@ func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
 
 		switch in.Type {
 		case "vless":
-			// 组装用户列表
+			// 组装用户列表 (Vision)
 			users := make([]map[string]any, 0)
 			for _, u := range payload.Users {
 				if u.Status == "active" {
@@ -153,11 +164,16 @@ func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
 				}
 			}
 
-			pubKey, _ := in.Options["public_key"].(string)
 			privKey, _ := in.Options["private_key"].(string)
 			shortID, _ := in.Options["short_id"].(string)
 			serverName, _ := in.Options["server_name"].(string)
 			dest, _ := in.Options["dest"].(string)
+			if serverName == "" {
+				serverName = "gateway.icloud.com"
+			}
+			if dest == "" {
+				dest = "gateway.icloud.com:443"
+			}
 
 			inbound := map[string]any{
 				"type":        "vless",
@@ -178,7 +194,57 @@ func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
 					},
 				},
 			}
-			_ = pubKey
+			inbounds = append(inbounds, inbound)
+
+		case "grpc-reality":
+			users := make([]map[string]any, 0)
+			for _, u := range payload.Users {
+				if u.Status == "active" {
+					users = append(users, map[string]any{
+						"name": u.Username,
+						"uuid": u.UUID,
+					})
+				}
+			}
+
+			privKey, _ := in.Options["private_key"].(string)
+			shortID, _ := in.Options["short_id"].(string)
+			serverName, _ := in.Options["server_name"].(string)
+			svcName, _ := in.Options["service_name"].(string)
+			dest, _ := in.Options["dest"].(string)
+			if serverName == "" {
+				serverName = "gateway.icloud.com"
+			}
+			if svcName == "" {
+				svcName = "grpc-service"
+			}
+			if dest == "" {
+				dest = "gateway.icloud.com:443"
+			}
+
+			inbound := map[string]any{
+				"type":        "vless",
+				"tag":         in.Tag,
+				"listen":      "::",
+				"listen_port": in.ListenPort,
+				"users":       users,
+				"transport": map[string]any{
+					"type":         "grpc",
+					"service_name": svcName,
+				},
+				"tls": map[string]any{
+					"enabled":     true,
+					"server_name": serverName,
+					"reality": map[string]any{
+						"enabled": true,
+						"handshake": map[string]any{
+							"server": dest,
+						},
+						"private_key": privKey,
+						"short_id":    []string{shortID},
+					},
+				},
+			}
 			inbounds = append(inbounds, inbound)
 
 		case "hysteria2":
@@ -200,7 +266,60 @@ func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
 				"users":       users,
 				"tls": map[string]any{
 					"enabled":  true,
-					"insecure": true, // 支持自签
+					"insecure": true, // 支持一键自签
+				},
+			}
+			inbounds = append(inbounds, inbound)
+
+		case "tuic":
+			users := make([]map[string]any, 0)
+			for _, u := range payload.Users {
+				if u.Status == "active" {
+					users = append(users, map[string]any{
+						"name":     u.Username,
+						"uuid":     u.UUID,
+						"password": u.Password,
+					})
+				}
+			}
+
+			inbound := map[string]any{
+				"type":        "tuic",
+				"tag":         in.Tag,
+				"listen":      "::",
+				"listen_port": in.ListenPort,
+				"users":       users,
+				"congestion_control": "bbr",
+				"zero_rtt_handshake": false,
+				"heartbeat":          "10s",
+				"tls": map[string]any{
+					"enabled":  true,
+					"alpn":     []string{"h3"},
+					"insecure": true,
+				},
+			}
+			inbounds = append(inbounds, inbound)
+
+		case "anytls":
+			users := make([]map[string]any, 0)
+			for _, u := range payload.Users {
+				if u.Status == "active" {
+					users = append(users, map[string]any{
+						"name":     u.Username,
+						"password": u.Password,
+					})
+				}
+			}
+
+			inbound := map[string]any{
+				"type":        "anytls",
+				"tag":         in.Tag,
+				"listen":      "::",
+				"listen_port": in.ListenPort,
+				"users":       users,
+				"tls": map[string]any{
+					"enabled":  true,
+					"insecure": true,
 				},
 			}
 			inbounds = append(inbounds, inbound)

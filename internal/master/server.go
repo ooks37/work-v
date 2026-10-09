@@ -115,6 +115,15 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			admin.PUT("/nodes/:id", api.HandleUpdateNode)
 			admin.DELETE("/nodes/:id", api.HandleDeleteNode)
 			admin.POST("/nodes/:id/sync", api.HandleSyncNode)
+			admin.GET("/nodes/:id/links", api.HandleGetNodeLinks)
+
+			// sing-box 内核管理与在线升级 (借鉴 iwantrun 最佳实践)
+			admin.GET("/singbox/version", api.HandleGetSingboxVersion)
+			admin.POST("/singbox/upgrade", api.HandleUpgradeSingbox)
+
+			// 系统开放端口与综合诊断
+			admin.GET("/system/ports", api.HandleGetOpenPorts)
+			admin.GET("/system/diagnostic", api.HandleGetDiagnostic)
 
 			// 用户管理
 			admin.GET("/users", api.HandleGetUsers)

@@ -200,9 +200,91 @@ uninstall_confirm() {
     fi
 }
 
+check_ports() {
+    echo -e "${COLOR_CYAN}===== 正在扫描系统当前开放端口与网络监听 =====${COLOR_RESET}"
+    ss -lntup 2>/dev/null || netstat -lntup 2>/dev/null || echo "无法获取端口状态"
+    echo -e "${COLOR_YELLOW}💡 提示: TCP 协议请确认放行 TCP，UDP 协议 (Hysteria2/TUIC) 请放行 UDP。${COLOR_RESET}"
+}
+
+update_singbox_core() {
+    echo -e "${COLOR_YELLOW}正在检测 sing-box 官方最新版本...${COLOR_RESET}"
+    local current_ver
+    current_ver=$(/usr/local/bin/sing-box version 2>/dev/null | head -n 1 || echo "未安装")
+    echo -e "当前内核: ${COLOR_GREEN}${current_ver}${COLOR_RESET}"
+
+    local latest_tag
+    latest_tag=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+    if [ -z "$latest_tag" ]; then
+        latest_tag="v1.13.12"
+    fi
+    local ver="${latest_tag#v}"
+    echo -e "官方最新: ${COLOR_GREEN}v${ver}${COLOR_RESET}"
+
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64) go_arch="amd64" ;;
+        aarch64|arm64) go_arch="arm64" ;;
+        *) go_arch="amd64" ;;
+    esac
+
+    local url="https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box-${ver}-linux-${go_arch}.tar.gz"
+    local mirror_url="https://ghfast.top/${url}"
+    local tmp_dir="/tmp/sb-update-$ver"
+    mkdir -p "$tmp_dir"
+
+    echo -e "正在拉取官方预编译二进制包..."
+    if ! curl -fsSL --connect-timeout 10 --retry 2 "$url" -o "$tmp_dir/sb.tar.gz" 2>/dev/null; then
+        echo -e "${COLOR_YELLOW}主源连接超时，切换加速镜像拉取...${COLOR_RESET}"
+        curl -fsSL --connect-timeout 15 --retry 3 "$mirror_url" -o "$tmp_dir/sb.tar.gz" 2>/dev/null || true
+    fi
+
+    if [ -f "$tmp_dir/sb.tar.gz" ]; then
+        tar -xzf "$tmp_dir/sb.tar.gz" -C "$tmp_dir" 2>/dev/null || true
+        local new_bin
+        new_bin=$(find "$tmp_dir" -type f -name sing-box 2>/dev/null | head -n 1)
+        if [ -n "$new_bin" ] && "$new_bin" version &>/dev/null; then
+            if [ -f "/usr/local/bin/sing-box" ]; then
+                cp -f /usr/local/bin/sing-box "/usr/local/bin/sing-box.bak.$(date +%s)" 2>/dev/null || true
+            fi
+            cp -f "$new_bin" /usr/local/bin/sing-box
+            chmod 755 /usr/local/bin/sing-box
+            rm -rf "$tmp_dir"
+            echo -e "${COLOR_GREEN}✅ sing-box 内核升级成功！新版本：$(/usr/local/bin/sing-box version | head -n 1)${COLOR_RESET}"
+            systemctl restart "$SERVICE_MASTER" "$SERVICE_AGENT" 2>/dev/null || true
+            return 0
+        fi
+    fi
+    rm -rf "$tmp_dir"
+    echo -e "${COLOR_RED}❌ 内核更新失败，请检查网络连接${COLOR_RESET}"
+}
+
+run_diagnostics() {
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+    echo -e "       ${COLOR_GREEN}${COLOR_BOLD}Work-V 分布式网络与订阅中枢 · 系统综合诊断报告${COLOR_RESET}        "
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+    echo -e "操作系统: ${COLOR_GREEN}$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"' || uname -s)${COLOR_RESET}"
+    echo -e "系统内核: $(uname -r) ($(uname -m))"
+    echo -e "TCP BBR:  ${COLOR_GREEN}$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')${COLOR_RESET}"
+    echo -e "Sing-box: $(/usr/local/bin/sing-box version 2>/dev/null | head -n 1 || echo '未安装')"
+    echo -e "系统负载: $(uptime | awk -F'load average:' '{print $2}')"
+    echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
+    echo "内存与Swap使用状态:"
+    free -h
+    echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
+    echo "服务运行状态:"
+    echo "• Master 主控服务: $(systemctl is-active "$SERVICE_MASTER" 2>/dev/null || echo '未运行')"
+    echo "• Agent  从节点:   $(systemctl is-active "$SERVICE_AGENT" 2>/dev/null || echo '未运行')"
+    echo "• Nginx  反代:     $(systemctl is-active nginx 2>/dev/null || echo '未运行')"
+    echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
+    echo "当前活跃网络监听端口:"
+    ss -lntup 2>/dev/null | head -n 15
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+}
+
 show_menu() {
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
-    echo -e "       ${COLOR_GREEN}${COLOR_BOLD}Work-V 分布式网络与订阅中枢 · 终端运维管理平台 (v1.2.0)${COLOR_RESET}        "
+    echo -e "       ${COLOR_GREEN}${COLOR_BOLD}Work-V 分布式网络与订阅中枢 · 终端运维管理平台 (v2.0.0)${COLOR_RESET}        "
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
     echo -e " 主控端 (Master): $(check_master_active)    从节点 (Agent): $(check_agent_active)"
     echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
@@ -215,12 +297,15 @@ show_menu() {
     echo -e " 【分布式从属节点管理】                    【系统与环境维护】"
     echo -e "  (9)  查看所有受控节点列表与在线状态       (12) 检查 Nginx 反代与 SSL 连通性"
     echo -e "  (10) 快速添加新副节点 (生成纳管命令)     (13) 释放系统内存与缓存清理"
-    echo -e "  (11) 查看服务实时运行日志                (14) 卸载清理 Work-V 服务"
+    echo -e "  (11) 查看服务实时运行日志                (14) 查看系统开放端口与协议监听"
+    echo -e "                                           (15) 检查并在线升级 sing-box 内核"
+    echo -e "                                           (16) 一键生成系统综合诊断报告"
+    echo -e "                                           (17) 卸载清理 Work-V 服务"
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
     echo -e "  (0)  退出管理"
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
 
-    read_input "请输入操作编号 [0-14]: " choice ""
+    read_input "请输入操作编号 [0-17]: " choice ""
     case "$choice" in
         1) restart_service ;;
         2) stop_service ;;
@@ -235,9 +320,12 @@ show_menu() {
         11) show_log ;;
         12) test_nginx ;;
         13) drop_caches ;;
-        14) uninstall_confirm ;;
+        14) check_ports ;;
+        15) update_singbox_core ;;
+        16) run_diagnostics ;;
+        17) uninstall_confirm ;;
         0) exit 0 ;;
-        *) echo -e "${COLOR_RED}无效选项，请输入 0-14${COLOR_RESET}" ;;
+        *) echo -e "${COLOR_RED}无效选项，请输入 0-17${COLOR_RESET}" ;;
     esac
 }
 
@@ -257,6 +345,9 @@ case "$1" in
     add-node) add_new_node "$2" ;;
     test|nginx) test_nginx ;;
     clean|drop) drop_caches ;;
+    ports) check_ports ;;
+    update-core|update-singbox) update_singbox_core ;;
+    diag|diagnostic) run_diagnostics ;;
     uninstall) uninstall_confirm ;;
     *) show_menu ;;
 esac

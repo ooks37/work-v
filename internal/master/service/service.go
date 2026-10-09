@@ -51,7 +51,12 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 	privKey, pubKey, _ := GenerateX25519KeyPair()
 	shortID := GenerateShortID()
 
-	// 默认开箱配置：443 端口 VLESS-Reality (伪装 apple icloud) + 8443 端口 Hysteria 2
+	// 默认开箱配置：全面支持 5 大现代化高速防封协议 (参考 iwantrun 最佳实践)
+	// 1. VLESS + REALITY + Vision (443/TCP)
+	// 2. Hysteria 2 (8443/UDP)
+	// 3. VLESS + gRPC + REALITY (2053/TCP)
+	// 4. TUIC v5 (8444/UDP, BBR+H3)
+	// 5. AnyTLS (8445/TCP)
 	inbounds := []common.InboundConfig{
 		{
 			Type:       "vless",
@@ -72,9 +77,44 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			ListenPort: 8443,
 			Enabled:    true,
 			Options: map[string]any{
-				"insecure": true, // 支持一键自签证书
-				"up_mbps":  100,
+				"insecure":  true,
+				"up_mbps":   100,
 				"down_mbps": 500,
+			},
+		},
+		{
+			Type:       "grpc-reality",
+			Tag:        "grpc-reality-in",
+			ListenPort: 2053,
+			Enabled:    true,
+			Options: map[string]any{
+				"server_name":  "gateway.icloud.com",
+				"dest":         "gateway.icloud.com:443",
+				"service_name": "grpc-service",
+				"private_key":  privKey,
+				"public_key":   pubKey,
+				"short_id":     shortID,
+			},
+		},
+		{
+			Type:       "tuic",
+			Tag:        "tuic-in",
+			ListenPort: 8444,
+			Enabled:    true,
+			Options: map[string]any{
+				"congestion_control": "bbr",
+				"alpn":               []string{"h3"},
+				"insecure":           true,
+			},
+		},
+		{
+			Type:       "anytls",
+			Tag:        "anytls-in",
+			ListenPort: 8445,
+			Enabled:    false, // 默认待激活
+			Options: map[string]any{
+				"server_name": "gateway.icloud.com",
+				"insecure":    true,
 			},
 		},
 	}
@@ -84,6 +124,128 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 	model.DB.Model(n).Update("inbounds_json", n.InboundsJSON)
 
 	return inbounds
+}
+
+// ProtocolShareLink 单个协议的客户端直连链接与元数据
+type ProtocolShareLink struct {
+	Protocol    string `json:"protocol"`     // 协议标识
+	Name        string `json:"name"`         // 节点显示名
+	Port        int    `json:"port"`         // 监听端口
+	PortType    string `json:"port_type"`    // TCP / UDP
+	Link        string `json:"link"`         // 完整客户端导入链接 (vless://, hysteria2://, tuic:// 等)
+	Description string `json:"description"`  // 协议特性说明
+}
+
+// GenerateNodeShareLinks 为指定节点与用户生成所有已启用协议的分享链接
+func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []ProtocolShareLink {
+	if node.Address == "" || node.Address == "自动探测" {
+		return nil
+	}
+	if userUUID == "" {
+		userUUID = "11111111-2222-3333-4444-555555555555"
+	}
+	if username == "" {
+		username = "user"
+	}
+
+	var inbounds []common.InboundConfig
+	if err := json.Unmarshal([]byte(node.InboundsJSON), &inbounds); err != nil || len(inbounds) == 0 {
+		inbounds = GetOrCreateDefaultInbounds(node)
+	}
+
+	links := make([]ProtocolShareLink, 0)
+	for _, in := range inbounds {
+		if !in.Enabled {
+			continue
+		}
+
+		switch in.Type {
+		case "vless":
+			pubKey, _ := in.Options["public_key"].(string)
+			shortID, _ := in.Options["short_id"].(string)
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = "gateway.icloud.com"
+			}
+			link := fmt.Sprintf("vless://%s@%s:%d?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#%s",
+				userUUID, node.Address, in.ListenPort, serverName, pubKey, shortID, fmt.Sprintf("%s-Reality", node.Name))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "vless-reality",
+				Name:        fmt.Sprintf("%s (VLESS Reality)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: "主流防封 Reality 伪装，基于 Vision 流控，原生 443 伪装",
+			})
+
+		case "hysteria2":
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = node.Address
+			}
+			link := fmt.Sprintf("hysteria2://%s@%s:%d?insecure=1&sni=%s#%s",
+				userUUID, node.Address, in.ListenPort, serverName, fmt.Sprintf("%s-Hy2", node.Name))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "hysteria2",
+				Name:        fmt.Sprintf("%s (Hysteria 2)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "UDP",
+				Link:        link,
+				Description: "基于 UDP QUIC 的暴力多路复用加速协议，恶劣网络下极速高带宽",
+			})
+
+		case "grpc-reality":
+			pubKey, _ := in.Options["public_key"].(string)
+			shortID, _ := in.Options["short_id"].(string)
+			serverName, _ := in.Options["server_name"].(string)
+			svcName, _ := in.Options["service_name"].(string)
+			if serverName == "" {
+				serverName = "gateway.icloud.com"
+			}
+			if svcName == "" {
+				svcName = "grpc-service"
+			}
+			link := fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=grpc&serviceName=%s#%s",
+				userUUID, node.Address, in.ListenPort, serverName, pubKey, shortID, svcName, fmt.Sprintf("%s-gRPC-Reality", node.Name))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "grpc-reality",
+				Name:        fmt.Sprintf("%s (gRPC Reality)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: "基于 gRPC 传输的 Reality 节点，穿透性强，适配 CDN 与负载均衡",
+			})
+
+		case "tuic":
+			link := fmt.Sprintf("tuic://%s:%s@%s:%d?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#%s",
+				userUUID, userUUID, node.Address, in.ListenPort, fmt.Sprintf("%s-TUIC", node.Name))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "tuic",
+				Name:        fmt.Sprintf("%s (TUIC v5)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "UDP",
+				Link:        link,
+				Description: "TUIC v5 自研 QUIC 协议，支持 BBR 拥塞控制与原生 UDP 中继",
+			})
+
+		case "anytls":
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = "gateway.icloud.com"
+			}
+			link := fmt.Sprintf("anytls://%s@%s:%d/?sni=%s&insecure=1#%s",
+				userUUID, node.Address, in.ListenPort, serverName, fmt.Sprintf("%s-AnyTLS", node.Name))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "anytls",
+				Name:        fmt.Sprintf("%s (AnyTLS)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: "AnyTLS 轻量化 TLS 传输协议",
+			})
+		}
+	}
+	return links
 }
 
 // BuildNodeConfigPayload 组装下发给 Agent 的完整 sing-box 运行配置

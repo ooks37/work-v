@@ -301,7 +301,7 @@ install_agent() {
     # 检查并自动安装 Sing-box 官方最新核心
     if ! command -v sing-box &> /dev/null && [ ! -f "/usr/local/bin/sing-box" ]; then
         echo -e "⚡ 正在下载安装 Sing-box 官方最新核心..."
-        SB_VER="1.10.7"
+        SB_VER="1.13.12"
         SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-${GO_ARCH}.tar.gz"
         SB_MIRROR="https://ghfast.top/${SB_URL}"
 
