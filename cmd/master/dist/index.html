@@ -153,6 +153,9 @@
         </div>
 
         <div class="flex items-center gap-3">
+          <button @click="showSafeModal = true" class="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition">
+            <span>🛡️ 安全路径: {{ safeEntrance.safe_path || '已关闭' }}</span>
+          </button>
           <button @click="fetchData" title="刷新数据" class="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition">
             <svg class="w-4 h-4" :class="{'animate-spin': isRefreshing}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
           </button>
@@ -544,6 +547,46 @@
       </div>
     </div>
 
+    <!-- 弹窗 6: 安全入口路径设置模态框 -->
+    <div v-if="showSafeModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-md w-full p-6 rounded-3xl border border-slate-800 shadow-2xl">
+        <div class="flex items-start justify-between mb-4">
+          <div>
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>🛡️ 安全路径防扫描保护</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">未授权访问根目录将伪装返回 404 Not Found</p>
+          </div>
+          <button @click="showSafeModal = false" class="text-slate-400 hover:text-white">&times;</button>
+        </div>
+
+        <div class="space-y-4 text-sm">
+          <div class="p-3.5 bg-slate-900/80 rounded-xl border border-slate-800 text-xs text-slate-300 space-y-1.5">
+            <p>🔒 <strong>隐身防护原理</strong>：开启后，任何探测工具直接访问 <code>http://IP:8080/</code> 或扫描后台端口，均只会收到虚假的标准 Nginx 404 页面，彻底隐藏代理主控。</p>
+            <p>🔑 <strong>解锁方式</strong>：仅当管理员访问专属安全入口路径时，浏览器才会获得授信 Cookie 并正常展示控制台。</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">当前安全入口链接</label>
+            <div class="p-2.5 bg-slate-950 rounded-xl border border-slate-800 font-mono text-xs text-emerald-400 flex items-center justify-between gap-2">
+              <span class="truncate">{{ safeEntrance.url }}</span>
+              <button @click="copyText(safeEntrance.url)" class="text-xs text-white hover:text-emerald-300 font-semibold shrink-0">复制</button>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">自定义安全路径 (留空则关闭)</label>
+            <input v-model="safePathInput" placeholder="如: /safe_entry 或 /my_secret" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500 text-xs font-mono">
+          </div>
+
+          <div class="pt-2 flex justify-end gap-3">
+            <button type="button" @click="showSafeModal = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs">取消</button>
+            <button type="button" @click="saveSafeEntrance" class="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs">保存并生效</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <script>
@@ -591,6 +634,10 @@
         const showAddUserModal = ref(false);
         const selectedUserForSub = ref(null);
         const showPassModal = ref(false);
+        const showSafeModal = ref(false);
+
+        const safeEntrance = reactive({ enabled: true, safe_path: '/safe_entry', url: '' });
+        const safePathInput = ref('/safe_entry');
 
         const nodeForm = reactive({ name: '', address: '', rate: 1.0 });
         const userForm = reactive({ username: '', traffic_limit_gb: 100, expire_days: 30 });
@@ -796,6 +843,32 @@
           }
         };
 
+        // 安全入口查询与更新
+        const fetchSafeEntrance = async () => {
+          try {
+            const data = await apiFetch('/api/v1/admin/safe-entrance');
+            Object.assign(safeEntrance, data);
+            safePathInput.value = data.safe_path || '';
+          } catch (err) {
+            console.error(err);
+          }
+        };
+
+        const saveSafeEntrance = async () => {
+          try {
+            const res = await apiFetch('/api/v1/admin/safe-entrance', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ safe_path: safePathInput.value })
+            });
+            Object.assign(safeEntrance, res);
+            showSafeModal.value = false;
+            addToast(res.message || '安全路径已更新');
+          } catch (err) {
+            addToast(err.message, 'error');
+          }
+        };
+
         // 剪贴板复制
         const copyText = (text) => {
           navigator.clipboard.writeText(text).then(() => {
@@ -852,6 +925,7 @@
         onMounted(() => {
           if (isLoggedIn.value) {
             fetchData();
+            fetchSafeEntrance();
             poller = setInterval(fetchData, 4000);
           }
         });
@@ -869,6 +943,7 @@
           showAddUserModal, userForm, createUser, resetUserTraffic, deleteUser,
           selectedUserForSub, openSubModal, getSubURL,
           showPassModal, passForm, changePassword,
+          showSafeModal, safeEntrance, safePathInput, saveSafeEntrance,
           copyText, formatBytes, formatSpeed, formatDate,
           calculateUserTrafficPercent, getUserProgressColor, getUserStatusText, getUserStatusBadgeClass
         };

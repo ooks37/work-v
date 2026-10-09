@@ -38,10 +38,24 @@ func main() {
 		log.Fatalf("初始化数据库失败: %v", err)
 	}
 
-	// 2. 注入 Hub 回调 (流量记账与配置提供)
+	// 2. 初始化安全路径配置
+	var safeSetting model.SystemSetting
+	if err := model.DB.Where("key = ?", "safe_path").First(&safeSetting).Error; err == nil && safeSetting.Value != "" {
+		middleware.SetSafePath(safeSetting.Value)
+	} else {
+		// 默认开启 /safe_entry 安全路径防扫描保护
+		middleware.SetSafePath("/safe_entry")
+		model.DB.Save(&model.SystemSetting{Key: "safe_path", Value: "/safe_entry"})
+	}
+	enabled, safePath := middleware.GetSafePath()
+	if enabled {
+		log.Printf("[Work-V 安全防护] 安全入口已启用: %s (访问未授权路径将隐蔽返回 404)", safePath)
+	}
+
+	// 3. 注入 Hub 回调 (流量记账与配置提供)
 	hub.GlobalHub.SetCallbacks(service.RecordTraffic, service.BuildNodeConfigPayload)
 
-	// 3. 启动后台到期与熔断监控
+	// 4. 启动后台到期与熔断监控
 	service.StartQuotaWatchdog()
 
 	// 4. 准备前端静态资源文件系统

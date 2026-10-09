@@ -128,6 +128,55 @@ func HandleChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功"})
 }
 
+// HandleGetSafeEntrance 获取当前安全入口状态与完整 URL
+func HandleGetSafeEntrance(c *gin.Context) {
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	enabled, safePath := middleware.GetSafePath()
+	url := middleware.GetSafeEntranceURL(scheme, c.Request.Host)
+
+	c.JSON(http.StatusOK, gin.H{
+		"enabled":   enabled,
+		"safe_path": safePath,
+		"url":       url,
+	})
+}
+
+// HandleSetSafeEntrance 修改安全入口路径
+func HandleSetSafeEntrance(c *gin.Context) {
+	var req struct {
+		SafePath string `json:"safe_path"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数格式错误"})
+		return
+	}
+
+	middleware.SetSafePath(req.SafePath)
+
+	// 持久化存储至数据库
+	_, newPath := middleware.GetSafePath()
+	model.DB.Save(&model.SystemSetting{
+		Key:       "safe_path",
+		Value:     newPath,
+		UpdatedAt: time.Now(),
+	})
+
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	url := middleware.GetSafeEntranceURL(scheme, c.Request.Host)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "安全路径已更新",
+		"safe_path": newPath,
+		"url":       url,
+	})
+}
+
 // HandleGetDashboard 获取仪表盘全局汇总
 func HandleGetDashboard(c *gin.Context) {
 	var totalNodes, onlineNodes int64

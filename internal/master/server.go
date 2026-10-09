@@ -21,6 +21,7 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.SecurityHeaders())
+	r.Use(middleware.SafeEntranceFilter())
 
 	// 1. Agent 反向长连通道 (免鉴权，通过长连协议首包 Token 认证)
 	r.GET("/ws/agent", func(c *gin.Context) {
@@ -48,6 +49,10 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 		{
 			admin.POST("/change-password", api.HandleChangePassword)
 			admin.GET("/dashboard", api.HandleGetDashboard)
+
+			// 安全入口设置
+			admin.GET("/safe-entrance", api.HandleGetSafeEntrance)
+			admin.POST("/safe-entrance", api.HandleSetSafeEntrance)
 
 			// 节点管理
 			admin.GET("/nodes", api.HandleGetNodes)
