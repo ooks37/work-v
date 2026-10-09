@@ -114,6 +114,10 @@ var GlobalLoginLimiter = &LoginLimiter{
 
 // CheckAllowed 检查 IP 是否被短时间封锁 (5分钟内超过5次失败即锁定)
 func (l *LoginLimiter) CheckAllowed(ip string) (bool, int) {
+	if ip == "127.0.0.1" || ip == "::1" || ip == "localhost" {
+		return true, 0
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 

@@ -27,8 +27,9 @@ func RandomToken(length int) string {
 
 // LoginRequest 登录请求载荷
 type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Username   string `json:"username" binding:"required"`
+	Password   string `json:"password" binding:"required"`
+	RememberMe bool   `json:"remember_me"`
 }
 
 // HandleLogin 管理员安全登录 (含防暴力破解)
@@ -75,15 +76,22 @@ func HandleLogin(c *gin.Context) {
 		"last_login_ip": clientIP,
 	})
 
-	// 4. 签发 JWT (有效期 7 天)
-	token, err := middleware.GenerateToken(admin.ID, admin.Username, 7*24*time.Hour)
+	// 4. 签发 JWT (支持记住登录 30 天，否则 24 小时)
+	expireDuration := 24 * time.Hour
+	cookieMaxAge := 24 * 3600
+	if req.RememberMe {
+		expireDuration = 30 * 24 * time.Hour
+		cookieMaxAge = 30 * 24 * 3600
+	}
+
+	token, err := middleware.GenerateToken(admin.ID, admin.Username, expireDuration)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "签发 Token 失败"})
 		return
 	}
 
 	// 设置安全 Cookie (方便直接浏览器鉴权)
-	c.SetCookie("workv_token", token, 7*24*3600, "/", "", false, true)
+	c.SetCookie("workv_token", token, cookieMaxAge, "/", "", false, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,

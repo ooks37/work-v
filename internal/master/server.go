@@ -3,6 +3,8 @@ package master
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"work-v/internal/master/api"
@@ -18,6 +20,7 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 
+	_ = r.SetTrustedProxies([]string{"127.0.0.1", "::1"})
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.SecurityHeaders())
@@ -33,6 +36,34 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 
 	// 3. 节点一键安装脚本动态分发
 	r.GET("/install.sh", handleAgentInstallScript)
+
+	// 4. 节点 Agent 预编译产物与依赖分发
+	r.GET("/download/:filename", func(c *gin.Context) {
+		filename := c.Param("filename")
+		if strings.Contains(filename, "..") || strings.Contains(filename, "/") {
+			c.String(http.StatusBadRequest, "Invalid filename")
+			return
+		}
+		candidates := []string{
+			filepath.Join(".", filename),
+			filepath.Join("/opt/work-v-master", filename),
+		}
+		if strings.HasPrefix(filename, "agent-") {
+			candidates = append(candidates,
+				filepath.Join(".", "work-v-agent"),
+				filepath.Join(".", "work-v-agent-linux"),
+				filepath.Join("/opt/work-v-master", "work-v-agent"),
+				filepath.Join("/opt/work-v-master", "work-v-agent-linux"),
+			)
+		}
+		for _, p := range candidates {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				c.File(p)
+				return
+			}
+		}
+		c.String(http.StatusNotFound, "File not found")
+	})
 
 	// 4. REST API 分组
 	v1 := r.Group("/api/v1")

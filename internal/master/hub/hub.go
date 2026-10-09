@@ -227,6 +227,7 @@ func (a *AgentConn) readPump(h *Hub) {
 	}()
 
 	a.Conn.SetReadLimit(1024 * 1024) // 1MB
+	_ = a.Conn.SetReadDeadline(time.Now().Add(75 * time.Second))
 
 	for {
 		var msg common.WSMessage
@@ -234,6 +235,7 @@ func (a *AgentConn) readPump(h *Hub) {
 			break
 		}
 
+		_ = a.Conn.SetReadDeadline(time.Now().Add(75 * time.Second))
 		a.LastSeen = time.Now()
 
 		switch msg.Type {

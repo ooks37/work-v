@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Work-V 分布式网络与订阅中枢管理工具 (类似宝塔 bt 运维指令)
+# ==============================================================================
+set -e
+
+COLOR_GREEN="\033[32m"
+COLOR_RED="\033[31m"
+COLOR_YELLOW="\033[33m"
+COLOR_CYAN="\033[36m"
+COLOR_RESET="\033[0m"
+
+APP_DIR="/opt/work-v-master"
+BIN_FILE="$APP_DIR/work-v-master"
+DB_FILE="$APP_DIR/data/work-v.db"
+SERVICE_NAME="work-v-master"
+
+show_info() {
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    echo -e "              ${COLOR_GREEN}Work-V 控制台安全入口与凭据信息${COLOR_RESET}                    "
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    $BIN_FILE -entry -db "$DB_FILE"
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+}
+
+restart_service() {
+    echo -e "${COLOR_YELLOW}正在重启 Work-V Master 服务...${COLOR_RESET}"
+    systemctl restart $SERVICE_NAME
+    sleep 2
+    systemctl status $SERVICE_NAME --no-pager
+    echo -e "${COLOR_GREEN}✅ 服务重启完成！${COLOR_RESET}"
+}
+
+stop_service() {
+    echo -e "${COLOR_YELLOW}正在停止 Work-V Master 服务...${COLOR_RESET}"
+    systemctl stop $SERVICE_NAME
+    echo -e "${COLOR_GREEN}✅ 服务已停止！${COLOR_RESET}"
+}
+
+start_service() {
+    echo -e "${COLOR_YELLOW}正在启动 Work-V Master 服务...${COLOR_RESET}"
+    systemctl start $SERVICE_NAME
+    sleep 2
+    systemctl status $SERVICE_NAME --no-pager
+    echo -e "${COLOR_GREEN}✅ 服务已启动！${COLOR_RESET}"
+}
+
+show_status() {
+    systemctl status $SERVICE_NAME --no-pager
+}
+
+show_log() {
+    echo -e "${COLOR_YELLOW}正在查看 Work-V 实时日志 (Ctrl+C 退出)...${COLOR_RESET}"
+    journalctl -u $SERVICE_NAME -f -n 40
+}
+
+set_safe_entry() {
+    read -p "请输入新的安全入口路径 (例如 /safe_entry 或 /my_secret): " new_path
+    if [ -n "$new_path" ]; then
+        $BIN_FILE -set-entry "$new_path" -db "$DB_FILE"
+        systemctl restart $SERVICE_NAME
+        echo -e "${COLOR_GREEN}✅ 安全入口已更新并重启生效！${COLOR_RESET}"
+        show_info
+    fi
+}
+
+reset_admin_password() {
+    read -p "确认重置管理员密码为默认值 admin123456 吗？[y/N]: " confirm
+    if [[ "$confirm" =~ ^[yY]$ ]]; then
+        $BIN_FILE -reset-admin -db "$DB_FILE"
+        echo -e "${COLOR_GREEN}✅ 管理员密码已重置为 admin123456！${COLOR_RESET}"
+    fi
+}
+
+test_nginx() {
+    echo -e "${COLOR_YELLOW}检查 Nginx 代理状态...${COLOR_RESET}"
+    nginx -t
+    echo -e "${COLOR_YELLOW}测试本地反代响应...${COLOR_RESET}"
+    curl -s -o /dev/null -w "Local 8080: %{http_code}\n" http://127.0.0.1:8080/
+    curl -s -o /dev/null -w "Domain 80: %{http_code}\n" http://qweqwe.shangxinci.com/
+    echo -e "${COLOR_GREEN}✅ 测试通过！${COLOR_RESET}"
+}
+
+show_menu() {
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    echo -e "           ${COLOR_GREEN}Work-V 分布式网络中枢管理命令行 (v1.0.0)${COLOR_RESET}           "
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    echo -e " (1) 重启 Master 服务               (5) 查看当前安全入口与凭据"
+    echo -e " (2) 停止 Master 服务               (6) 修改安全入口路径"
+    echo -e " (3) 启动 Master 服务               (7) 重置管理员密码"
+    echo -e " (4) 查看运行状态与内存占用         (8) 查看服务实时日志"
+    echo -e " (9) 测试 Nginx 代理与端口状态      (0) 退出管理"
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+    
+    # 打印当前安全入口快捷摘要
+    $BIN_FILE -entry -db "$DB_FILE" 2>/dev/null | grep -E "安全入口路径|外网域名入口" || true
+    echo -e "${COLOR_CYAN}==================================================================${COLOR_RESET}"
+
+    read -p "请输入编号 [0-9]: " choice
+    case "$choice" in
+        1) restart_service ;;
+        2) stop_service ;;
+        3) start_service ;;
+        4) show_status ;;
+        5) show_info ;;
+        6) set_safe_entry ;;
+        7) reset_admin_password ;;
+        8) show_log ;;
+        9) test_nginx ;;
+        0) exit 0 ;;
+        *) echo -e "${COLOR_RED}无效选项${COLOR_RESET}" ;;
+    esac
+}
+
+# 命令行非交互快捷参数支持
+case "$1" in
+    default|entry|info) show_info ;;
+    restart) restart_service ;;
+    stop) stop_service ;;
+    start) start_service ;;
+    status) show_status ;;
+    log|logs) show_log ;;
+    passwd|password) reset_admin_password ;;
+    test) test_nginx ;;
+    *) show_menu ;;
+esac

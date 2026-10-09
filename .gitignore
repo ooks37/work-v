@@ -5,6 +5,11 @@ bin/
 *.dll
 *.so
 *.dylib
+*.tar.gz
+work-v-master
+work-v-agent
+work-v-master-linux
+work-v-agent-linux
 
 # Data & SQLite
 data/

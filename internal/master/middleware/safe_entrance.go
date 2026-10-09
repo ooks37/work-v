@@ -60,12 +60,143 @@ func HandleSafeEntryVisit(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/")
 }
 
-// StandardNginx404 伪装标准 Nginx 404 网页
-const StandardNginx404 = `<html>
-<head><title>404 Not Found</title></head>
+// BaotaSafeEntranceHTML 类似宝塔面板安全入口拦截提示页面
+const BaotaSafeEntranceHTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>请使用正确的入口登录面板</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f0f2f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .panel-card {
+      background: #ffffff;
+      width: 100%;
+      max-width: 480px;
+      padding: 42px 36px;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      border: 1px solid #e5e7eb;
+      text-align: center;
+    }
+    .warn-icon {
+      width: 64px;
+      height: 64px;
+      line-height: 64px;
+      border-radius: 50%;
+      background: #fff7e6;
+      border: 2px solid #ffd591;
+      margin: 0 auto 18px;
+      font-size: 32px;
+      color: #fa8c16;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1f2937;
+      margin-bottom: 12px;
+    }
+    .subtitle {
+      font-size: 13.5px;
+      color: #4b5563;
+      line-height: 1.6;
+      margin-bottom: 22px;
+    }
+    .info-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-left: 4px solid #10b981;
+      border-radius: 8px;
+      padding: 14px 16px;
+      text-align: left;
+      font-size: 13px;
+      color: #334155;
+      line-height: 1.6;
+      margin-bottom: 22px;
+    }
+    .info-box strong {
+      color: #0f172a;
+    }
+    .code-badge {
+      background: #e2e8f0;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      color: #0f172a;
+    }
+    .quick-entry {
+      display: flex;
+      gap: 8px;
+    }
+    .quick-input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .quick-input:focus {
+      border-color: #10b981;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+    .quick-btn {
+      padding: 10px 20px;
+      background: #10b981;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+    .quick-btn:hover {
+      background: #059669;
+    }
+    .footer-brand {
+      margin-top: 24px;
+      font-size: 12px;
+      color: #9ca3af;
+    }
+  </style>
+</head>
 <body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
+  <div class="panel-card">
+    <div class="warn-icon">⚠️</div>
+    <h1>请使用正确的入口登录面板</h1>
+    <p class="subtitle">出于系统与集群安全考虑，已开启安全入口登录保护。<br>请在控制台地址后附带正确的安全入口路径进行访问。</p>
+    
+    <div class="info-box">
+      <strong>💡 管理员提示：</strong><br>
+      • 默认安全入口：<span class="code-badge">/safe_entry</span><br>
+      • 若忘记配置的安全入口，可登录服务器终端执行：<br>
+      &nbsp;&nbsp;<span class="code-badge">work-v-master -entry</span>
+    </div>
+
+    <form onsubmit="event.preventDefault(); var val=document.getElementById('entryInput').value.trim(); if(val){ window.location.href=(val.startsWith('/')?val:('/'+val)); }">
+      <div class="quick-entry">
+        <input id="entryInput" type="text" class="quick-input" placeholder="输入安全路径 (如 /safe_entry)" />
+        <button type="submit" class="quick-btn">验证并进入</button>
+      </div>
+    </form>
+
+    <div class="footer-brand">
+      Work-V 分布式网络中枢 · 安全入口保护
+    </div>
+  </div>
 </body>
 </html>`
 
@@ -84,15 +215,15 @@ func SafeEntranceFilter() gin.HandlerFunc {
 
 		path := c.Request.URL.Path
 
-		// 1. 如果正是访问安全路径，直接执行入口解锁处理
-		if path == safePath {
+		// 1. 如果访问的是安全路径 (支持带或不带结尾斜杠)，直接执行入口解锁处理
+		if strings.TrimSuffix(path, "/") == strings.TrimSuffix(safePath, "/") {
 			HandleSafeEntryVisit(c)
 			c.Abort()
 			return
 		}
 
-		// 2. 白名单免检路径：订阅链接、Agent WS 长连、安装脚本
-		if strings.HasPrefix(path, "/sub/") || strings.HasPrefix(path, "/ws/") || path == "/install.sh" {
+		// 2. 白名单免检路径：订阅链接、Agent WS 长连、安装脚本、二进制下载
+		if strings.HasPrefix(path, "/sub/") || strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/download/") || path == "/install.sh" {
 			c.Next()
 			return
 		}
@@ -112,10 +243,16 @@ func SafeEntranceFilter() gin.HandlerFunc {
 			return
 		}
 
-		// 5. 未授权访问，伪装成标准 404 Not Found，彻底隐藏面板存在
+		// 5. 未授权访问拦截：API 返回 403 JSON，浏览器返回类似宝塔安全入口提示页
+		if strings.HasPrefix(path, "/api/") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "安全入口拦截：请先通过正确的安全入口访问"})
+			c.Abort()
+			return
+		}
+
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.Header("Server", "nginx")
-		c.String(http.StatusNotFound, StandardNginx404)
+		c.String(http.StatusOK, BaotaSafeEntranceHTML)
 		c.Abort()
 	}
 }
