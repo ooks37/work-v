@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 	"golang.org/x/crypto/curve25519"
 )
 
-// GenerateX25519KeyPair 自动生成 Reality 协议所需的 x25519 公私钥对
+// GenerateX25519KeyPair 自动生成 Reality 协议所需的 x25519 公私钥对 (Base64 URL 安全格式)
 func GenerateX25519KeyPair() (privateKeyBase64, publicKeyBase64 string, err error) {
 	var priv [32]byte
 	if _, err := rand.Read(priv[:]); err != nil {
@@ -29,7 +30,7 @@ func GenerateX25519KeyPair() (privateKeyBase64, publicKeyBase64 string, err erro
 	var pub [32]byte
 	curve25519.ScalarBaseMult(&pub, &priv)
 
-	return hex.EncodeToString(priv[:]), hex.EncodeToString(pub[:]), nil
+	return base64.RawURLEncoding.EncodeToString(priv[:]), base64.RawURLEncoding.EncodeToString(pub[:]), nil
 }
 
 // GenerateShortID 生成 8 字节 Reality ShortID
@@ -61,7 +62,7 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 		{
 			Type:       "vless",
 			Tag:        "vless-reality-in",
-			ListenPort: 443,
+			ListenPort: 2083,
 			Enabled:    true,
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
@@ -121,7 +122,9 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 
 	data, _ := json.Marshal(inbounds)
 	n.InboundsJSON = string(data)
-	model.DB.Model(n).Update("inbounds_json", n.InboundsJSON)
+	if model.DB != nil && n.ID > 0 {
+		model.DB.Model(n).Update("inbounds_json", n.InboundsJSON)
+	}
 
 	return inbounds
 }
@@ -139,7 +142,7 @@ type ProtocolShareLink struct {
 // GenerateNodeShareLinks 为指定节点与用户生成所有已启用协议的分享链接
 func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []ProtocolShareLink {
 	if node.Address == "" || node.Address == "自动探测" {
-		return nil
+		node.Address = "156.224.28.20"
 	}
 	if userUUID == "" {
 		userUUID = "11111111-2222-3333-4444-555555555555"

@@ -2,6 +2,8 @@ package runner
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -67,7 +69,7 @@ func (r *SingboxRunner) ApplyConfig(payload *common.NodeConfigPayload) error {
 
 	configFile := filepath.Join(r.configDir, "sing-box.json")
 	tmpFile := filepath.Join(r.configDir, fmt.Sprintf(".sing-box.%d.tmp", time.Now().UnixNano()))
-	sbJSON, err := generateSingboxJSON(payload)
+	sbJSON, err := generateSingboxJSON(payload, r.configDir)
 	if err != nil {
 		return fmt.Errorf("生成 sing-box 配置失败: %w", err)
 	}
@@ -141,9 +143,48 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 	return []common.UserDeltaTraffic{}
 }
 
+func getOrCreateCert(configDir string) (string, string) {
+	// 1. 优先使用 Let's Encrypt 证书
+	leCert := "/etc/letsencrypt/live/qweqwe.shangxinci.com/fullchain.pem"
+	leKey := "/etc/letsencrypt/live/qweqwe.shangxinci.com/privkey.pem"
+	if _, err := os.Stat(leCert); err == nil {
+		if _, err := os.Stat(leKey); err == nil {
+			return leCert, leKey
+		}
+	}
+
+	// 2. 检查节点本地证书
+	localCert := filepath.Join(configDir, "cert.pem")
+	localKey := filepath.Join(configDir, "key.pem")
+	if _, err := os.Stat(localCert); err == nil {
+		if _, err := os.Stat(localKey); err == nil {
+			return localCert, localKey
+		}
+	}
+
+	// 3. 自动生成自签证书
+	_ = os.MkdirAll(configDir, 0755)
+	_ = exec.Command("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+		"-sha256", "-keyout", localKey, "-out", localCert,
+		"-days", "3650", "-subj", "/CN=gateway.icloud.com").Run()
+
+	return localCert, localKey
+}
+
+// formatRealityKey 确保 Reality 密钥为 Base64 URL 格式 (兼容历史 64 字节 Hex 格式)
+func formatRealityKey(k string) string {
+	if len(k) == 64 {
+		if b, err := hex.DecodeString(k); err == nil && len(b) == 32 {
+			return base64.RawURLEncoding.EncodeToString(b)
+		}
+	}
+	return k
+}
+
 // generateSingboxJSON 将通用的 NodeConfigPayload 转换为官方标准的 Sing-box json
-func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
+func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string) ([]byte, error) {
 	inbounds := make([]map[string]any, 0)
+	certPath, keyPath := getOrCreateCert(configDir)
 
 	for _, in := range payload.Inbounds {
 		if !in.Enabled {
@@ -164,7 +205,7 @@ func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
 				}
 			}
 
-			privKey, _ := in.Options["private_key"].(string)
+			privKey := formatRealityKey(fmt.Sprintf("%v", in.Options["private_key"]))
 			shortID, _ := in.Options["short_id"].(string)
 			serverName, _ := in.Options["server_name"].(string)
 			dest, _ := in.Options["dest"].(string)
@@ -207,7 +248,7 @@ func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
 				}
 			}
 
-			privKey, _ := in.Options["private_key"].(string)
+			privKey := formatRealityKey(fmt.Sprintf("%v", in.Options["private_key"]))
 			shortID, _ := in.Options["short_id"].(string)
 			serverName, _ := in.Options["server_name"].(string)
 			svcName, _ := in.Options["service_name"].(string)
@@ -265,8 +306,9 @@ func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
 				"listen_port": in.ListenPort,
 				"users":       users,
 				"tls": map[string]any{
-					"enabled":  true,
-					"insecure": true, // 支持一键自签
+					"enabled":          true,
+					"certificate_path": certPath,
+					"key_path":         keyPath,
 				},
 			}
 			inbounds = append(inbounds, inbound)
@@ -293,9 +335,10 @@ func generateSingboxJSON(payload *common.NodeConfigPayload) ([]byte, error) {
 				"zero_rtt_handshake": false,
 				"heartbeat":          "10s",
 				"tls": map[string]any{
-					"enabled":  true,
-					"alpn":     []string{"h3"},
-					"insecure": true,
+					"enabled":          true,
+					"alpn":             []string{"h3"},
+					"certificate_path": certPath,
+					"key_path":         keyPath,
 				},
 			}
 			inbounds = append(inbounds, inbound)
