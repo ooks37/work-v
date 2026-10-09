@@ -175,6 +175,10 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			admin.POST("/nodes/:id/sync", api.HandleSyncNode)
 			admin.GET("/nodes/:id/links", api.HandleGetNodeLinks)
 
+			// 一键自动部署 (SSH 纳管) 与进度查询
+			admin.POST("/auto-deploy", api.HandleAutoDeployNode)
+			admin.GET("/auto-deploy/:id", api.HandleGetAutoDeployStatus)
+
 			// sing-box 内核管理与在线升级 (借鉴 iwantrun 最佳实践)
 			admin.GET("/singbox/version", api.HandleGetSingboxVersion)
 			admin.POST("/singbox/upgrade", api.HandleUpgradeSingbox)

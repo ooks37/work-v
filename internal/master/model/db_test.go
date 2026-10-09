@@ -3,8 +3,12 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
+
+// randomEntryRe 宝塔风格随机入口: / + 16 位 hex
+var randomEntryRe = regexp.MustCompile(`^/[0-9a-f]{16}$`)
 
 // setupTestDB 使用独立临时目录, 并在用例结束时关闭连接 (否则 Windows 无法删除仍被占用的文件)
 func setupTestDB(t *testing.T, name string) {
@@ -61,10 +65,21 @@ func TestSetSettingIsReadableAfterRepeatedWrites(t *testing.T) {
 func TestGetSafeEntryConfigRespectsExplicitSwitch(t *testing.T) {
 	setupTestDB(t, "entry.db")
 
-	// 1. 默认状态: 启用且为默认路径
+	// 1. 首次启动应当生成"宝塔风格"的随机安全入口 (不再使用公开文档里的 /safe_entry)
 	enabled, path := GetSafeEntryConfig()
-	if !enabled || path != DefaultSafePath {
-		t.Fatalf("默认状态异常: enabled=%v path=%q", enabled, path)
+	if !enabled {
+		t.Fatalf("默认应当启用安全入口: enabled=%v", enabled)
+	}
+	if path == DefaultSafePath || path == "" || path == "/" {
+		t.Fatalf("安全入口应当是随机路径, 实际 %q", path)
+	}
+	if !randomEntryRe.MatchString(path) {
+		t.Errorf("随机入口格式异常: %q (期望 /+16 位 hex)", path)
+	}
+	// 必须已落库, 重启后保持不变
+	var stored SystemSetting
+	if err := DB.Where("key = ?", "safe_path").First(&stored).Error; err != nil || stored.Value != path {
+		t.Errorf("随机入口未持久化: %v stored=%q path=%q", err, stored.Value, path)
 	}
 
 	// 2. 关闭之后必须一直保持关闭 (即使 safe_path 为空)

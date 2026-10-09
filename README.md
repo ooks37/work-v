@@ -81,7 +81,7 @@
 curl -fsSL https://raw.githubusercontent.com/ooks37/work-v/main/scripts/install.sh | bash
 ```
 > 安装向导将自动询问是否绑定域名：
-> - 若选择**纯 IP 模式**：直接以 `http://<服务器IP>:8080/safe_entry` 访问。
+> - 若选择**纯 IP 模式**：安装完成后执行 `work-v default` 查看**随机安全入口**地址（宝塔风格，每次安装随机生成）。
 > - 若选择**域名绑定模式**：输入您的域名（如 `panel.example.com`），脚本将自动配置主控并在系统中生成 Nginx 反代配置。
 
 #### 2. 命令行静默部署 (可选纯 IP 或指定域名)
@@ -109,7 +109,7 @@ curl -fsSL https://raw.githubusercontent.com/ooks37/work-v/main/scripts/install.
    ```
 
 3. 访问 Web 控制台：
-   - 浏览器打开：`http://<你的服务器IP>:8080/safe_entry`
+   - 浏览器打开：`http://<你的服务器IP>:8080/` 会看到安全入口提示页；入口路径用 `work-v default` 查询（默认安装会随机生成）
    - **默认管理员账号**：`admin`
    - **默认初始密码**：`admin123456`
 

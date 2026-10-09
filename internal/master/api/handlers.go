@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -289,6 +290,114 @@ func HandleGetNodes(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, nodes)
+}
+
+// hostOnlyRe 校验 Host/域名字符集, 防止把请求头拼进远端 shell 命令 (命令注入)
+var hostOnlyRe = regexp.MustCompile(`^[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
+
+// resolveMasterBaseURL 计算主控对外可访问地址 (优先主控域名, 其次请求 Host)
+func resolveMasterBaseURL(c *gin.Context) (string, error) {
+	if d := strings.TrimSpace(model.GetSetting("master_domain", "")); d != "" {
+		d = strings.TrimRight(d, "/")
+		if strings.HasPrefix(d, "http://") || strings.HasPrefix(d, "https://") {
+			return d, nil
+		}
+		if !hostOnlyRe.MatchString(d) {
+			return "", fmt.Errorf("主控域名 %q 不合法", d)
+		}
+		return "https://" + d, nil
+	}
+
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(c.Request.Host)
+	if !hostOnlyRe.MatchString(host) {
+		return "", fmt.Errorf("无法确定主控对外地址, 请先配置域名: work-v domain <你的域名>")
+	}
+	return scheme + "://" + host, nil
+}
+
+// HandleAutoDeployNode 一键自动部署: 创建节点并通过 SSH 在目标服务器安装 Agent。
+// SSH 密码仅用于本次连接, 不落库、不写日志。
+func HandleAutoDeployNode(c *gin.Context) {
+	var req struct {
+		Name        string  `json:"name" binding:"required"`
+		Address     string  `json:"address"`
+		Rate        float64 `json:"rate"`
+		SSHHost     string  `json:"ssh_host" binding:"required"`
+		SSHPort     int     `json:"ssh_port"`
+		SSHUser     string  `json:"ssh_user"`
+		SSHPassword string  `json:"ssh_password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写节点名称、目标服务器地址与 SSH 密码"})
+		return
+	}
+
+	base, err := resolveMasterBaseURL(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Rate <= 0 {
+		req.Rate = 1.0
+	}
+	if req.SSHUser == "" {
+		req.SSHUser = "root"
+	}
+	if req.SSHPort <= 0 || req.SSHPort > 65535 {
+		req.SSHPort = 22
+	}
+	if strings.TrimSpace(req.Address) == "" {
+		req.Address = req.SSHHost // 默认用目标机地址作为客户端连接地址
+	}
+
+	node := model.Node{
+		Name:         req.Name,
+		Address:      req.Address,
+		Rate:         req.Rate,
+		Token:        "node_" + RandomToken(16),
+		Status:       "offline",
+		DeployStatus: "running",
+		DeployHost:   req.SSHHost,
+	}
+	if err := model.DB.Create(&node).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存节点失败: " + err.Error()})
+		return
+	}
+	service.GetOrCreateDefaultInbounds(&node)
+
+	service.AutoDeployNode(node.ID, service.AutoDeployRequest{
+		Host:     req.SSHHost,
+		Port:     req.SSHPort,
+		User:     req.SSHUser,
+		Password: req.SSHPassword,
+		BaseURL:  base,
+	})
+
+	log.Printf("[AutoDeploy] 节点 %d (%s) 开始自动部署到 %s@%s:%d", node.ID, node.Name, req.SSHUser, req.SSHHost, req.SSHPort)
+	c.JSON(http.StatusOK, gin.H{"message": "已创建节点并开始自动部署", "node": node})
+}
+
+// HandleGetAutoDeployStatus 查询自动部署进度与日志 (前端轮询)
+func HandleGetAutoDeployStatus(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var node model.Node
+	if err := model.DB.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":            node.ID,
+		"name":          node.Name,
+		"address":       node.Address,
+		"status":        node.Status,
+		"deploy_status": node.DeployStatus,
+		"deploy_log":    node.DeployLog,
+	})
 }
 
 // HandleCreateNode 创建节点 (支持免填地址，上线自动回填)

@@ -2,6 +2,7 @@ package model
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -61,6 +62,9 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	// 检查并初始化系统核心安全密钥 (JWT 密钥、安全入口动态 Salt 等)
 	initSystemSecrets(db)
+
+	// 初始化安全入口路径 (宝塔风格: 首次启动生成随机入口)
+	initSafeEntry(db)
 
 	// 检查是否需要初始化默认管理员
 	initDefaultAdmin(db)
@@ -150,6 +154,27 @@ func initSystemSecrets(db *gorm.DB) {
 		newSalt := fmt.Sprintf("%x", buf)
 		db.Save(&SystemSetting{Key: "entrance_salt", Value: newSalt, UpdatedAt: time.Now()})
 	}
+}
+
+// initSafeEntry 宝塔风格安全入口: 首次启动生成随机路径并落库。
+// 历史默认值 /safe_entry 写在公开文档里, 等于没有防护, 因此改为随机入口,
+// 管理入口地址通过 "work-v default" / "work-v-master -entry" 查询。
+func initSafeEntry(db *gorm.DB) {
+	var s SystemSetting
+	if err := db.Where("key = ?", "safe_path").First(&s).Error; err == nil && strings.TrimSpace(s.Value) != "" {
+		return
+	}
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		log.Printf("[Work-V] 生成安全入口随机路径失败: %v", err)
+		return
+	}
+	newPath := "/" + hex.EncodeToString(buf)
+	if err := db.Save(&SystemSetting{Key: "safe_path", Value: newPath, UpdatedAt: time.Now()}).Error; err != nil {
+		log.Printf("[Work-V] 保存安全入口路径失败: %v", err)
+		return
+	}
+	log.Printf("[Work-V 安全防护] 已生成随机安全入口路径: %s (用 work-v default 查看完整地址)", newPath)
 }
 
 func initDefaultAdmin(db *gorm.DB) {

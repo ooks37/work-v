@@ -354,13 +354,18 @@ EOF
     echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
     echo -e "${COLOR_GREEN}🎉 Work-V 主控端已成功部署并启动！${COLOR_RESET}"
     echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
+    # 读取主控实际生成的安全入口路径 (宝塔风格随机入口, 不再硬编码 /safe_entry)
+    ENTRY_PATH=$("$INSTALL_DIR/work-v-master" -db "$INSTALL_DIR/data/work-v.db" -port "$PORT" -entry 2>/dev/null | grep -m1 '安全入口路径' | sed -E 's/.*: *//' | tr -d '\r')
+    [ -z "$ENTRY_PATH" ] && ENTRY_PATH="$SAFE_PATH"
+
     if [ -n "$DOMAIN" ]; then
         echo -e "• 外网访问域名: ${COLOR_CYAN}$DOMAIN${COLOR_RESET}"
-        echo -e "• 控制台入口:   ${COLOR_GREEN}http://$DOMAIN$SAFE_PATH${COLOR_RESET} (配置SSL后: https://$DOMAIN$SAFE_PATH)"
+        echo -e "• 控制台入口:   ${COLOR_GREEN}https://$DOMAIN$ENTRY_PATH${COLOR_RESET}"
     else
         echo -e "• 访问方式:     ${COLOR_YELLOW}原生 IP + 端口直连${COLOR_RESET}"
-        echo -e "• 控制台入口:   ${COLOR_GREEN}http://$LOCAL_IP:$PORT$SAFE_PATH${COLOR_RESET}"
+        echo -e "• 控制台入口:   ${COLOR_GREEN}http://$LOCAL_IP:$PORT$ENTRY_PATH${COLOR_RESET}"
     fi
+    echo -e "• 随机安全入口会写入数据库, 随时可用 ${COLOR_CYAN}work-v default${COLOR_RESET} 查询"
     if [ -x /usr/local/bin/work-v ]; then
         /usr/local/bin/work-v default 2>/dev/null || true
     else

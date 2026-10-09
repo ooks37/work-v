@@ -40,6 +40,11 @@ type Node struct {
 	// 协议配置项 (JSON 序列化存储)
 	InboundsJSON string `gorm:"type:text" json:"inbounds_json"`
 
+	// 自动部署 (SSH 一键纳管) 状态, 供面板展示进度
+	DeployStatus string `gorm:"size:20;default:''" json:"deploy_status"` // "" | running | success | failed
+	DeployLog    string `gorm:"type:text" json:"-"`                      // 安装脚本输出
+	DeployHost   string `gorm:"size:255" json:"deploy_host"`             // 自动部署使用的 SSH 地址
+
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`

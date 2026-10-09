@@ -278,7 +278,8 @@ func main() {
 	safeEnabled, safePathCfg := model.GetSafeEntryConfig()
 	if safeEnabled {
 		middleware.SetSafePath(safePathCfg)
-		log.Printf("[Work-V 安全防护] 类似宝塔安全入口已启用: %s (未授权访问将展示安全拦截页)", safePathCfg)
+		log.Printf("[Work-V 安全防护] 安全入口(宝塔风格)已启用: %s%s", getBaseURL(), safePathCfg)
+		log.Printf("[Work-V 安全防护] 未授权访问将展示安全拦截页; 随时可用 \"work-v default\" 查看入口地址")
 	} else {
 		middleware.SetSafePath("")
 		log.Printf("[Work-V 安全防护] 安全入口拦截已关闭 (safe_entry_enabled=0)")
