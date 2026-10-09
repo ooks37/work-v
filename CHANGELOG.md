@@ -1,5 +1,33 @@
 # 更新日志
 
+## v2.1.1 — 安全入口 (safe path) 专项修复
+
+> 由用户反馈后复现确认: 安全入口存在可绕过缺陷。
+
+1. **静态资源白名单可按后缀绕过安全入口 (严重)** — `internal/master/middleware/safe_entrance.go`、`server.go`
+   原实现用 `HasSuffix(path, ".js"/".css"/".png"...)` 放行静态资源, 于是任何以这些后缀结尾的请求都会跳过入口校验:
+   - 未授权访问 `/anything.js` 会返回**面板 HTML** (NoRoute 回落 index.html), "隐藏面板"形同虚设;
+   - `PUT/DELETE /api/v1/admin/nodes/1.js` 这类带 `:id` 的管理接口会绕过入口层直达 JWT 鉴权
+     (实测返回 401 而非 403), 凭证泄露或 CSRF 场景下可直接操作接口。
+   现在改为**严格白名单**: 启动时扫描前端产物根目录登记真实静态文件 (不含 index.html),
+   只有登记在册的文件才免检; NoRoute 对"带扩展名但不存在"的路径直接 404, 不再回落面板 HTML。
+
+2. **安全入口路径本身缺少校验** — `middleware.ValidateSafePath`
+   可被设置成 `/install.sh`、`/sub/...`、`/api/...`、`/evil.js` 等, 直接让节点安装脚本、订阅或接口不可用。
+   现在 `work-v set-entry` 与 Web 端都会校验: 保留前缀、非法字符、`..`、文件扩展名、路径长度。
+
+3. **修改安全入口会把管理员自己锁在门外** — `api.HandleSetSafeEntrance`
+   路径变更后旧 Cookie 立即失效, 而面板不会提示重新访问新入口。
+   现在修改成功后立即给当前浏览器换发与新路径匹配的凭据; 同时把入口 Cookie 改为 `HttpOnly`(前端不读取, 降低被脚本窃取的风险)。
+
+4. **`/download/` 用后缀黑名单拦敏感文件** — `server.go`
+   `work-v.db.bak`、`config.yml.bak` 这类备份文件能绕过 `.db`/`.yml` 的后缀判断, **匿名下载整个数据库**
+   (含管理员 bcrypt 哈希、节点 Token、用户 UUID)。改为"禁止子串 + 文件名字符集白名单"。
+
+新增回归测试 `internal/master/safe_entrance_test.go` (9 个用例):
+未授权必须拿到拦截页、后缀不能绕过接口、真实静态资源仍可用、持 Cookie 面板可用、
+非数字 id 被拒绝、非法入口路径被拒绝、改入口后换发新凭据且旧凭据失效、公开白名单仍可达、备份文件被拒绝。
+
 ## v2.1.0 — 稳定性 / 安全性修复版
 
 本版针对一次完整代码审计发现的问题做修复，全部修复点均补了回归测试

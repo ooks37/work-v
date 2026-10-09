@@ -131,6 +131,10 @@ func main() {
 		if !strings.HasPrefix(newPath, "/") {
 			newPath = "/" + newPath
 		}
+		if err := middleware.ValidateSafePath(newPath); err != nil {
+			fmt.Printf("❌ 安全入口路径不合法: %v\n", err)
+			os.Exit(1)
+		}
 		model.DB.Save(&model.SystemSetting{
 			Key:       "safe_path",
 			Value:     newPath,

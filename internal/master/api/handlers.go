@@ -181,6 +181,10 @@ func HandleSetSafeEntrance(c *gin.Context) {
 	}
 
 	if req.SafePath != "" {
+		if err := middleware.ValidateSafePath(req.SafePath); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		middleware.SetSafePath(req.SafePath)
 		enabledNow, newPath := middleware.GetSafePath()
 		if enabledNow {
@@ -190,6 +194,9 @@ func HandleSetSafeEntrance(c *gin.Context) {
 				UpdatedAt: time.Now(),
 			})
 			_ = model.SetSetting("safe_entry_enabled", "1")
+			// 立刻给当前浏览器换上与新路径匹配的入口 Cookie,
+			// 否则改完路径后这个会话马上会被自己刚刚设置的规则挡在门外
+			middleware.SetSafeEntranceCookie(c)
 		} else {
 			// "/" 或空串代表关闭安全入口: 必须显式落库开关, 否则重启后会被默认值重新打开
 			_ = model.SetSetting("safe_entry_enabled", "0")

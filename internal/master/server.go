@@ -72,9 +72,25 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			}
 		}
 
-		// 明确拒绝数据库、配置文件、源代码与隐藏文件
-		if !isAllowed || strings.HasSuffix(filename, ".db") || strings.HasSuffix(filename, ".env") ||
-			strings.HasSuffix(filename, ".go") || strings.HasSuffix(filename, ".yml") || strings.HasPrefix(filename, ".") {
+		// 拒绝数据库、配置、源码、证书与隐藏文件。
+		// 注意必须用"包含"而不是"后缀": 历史实现只判断后缀, 于是 work-v.db.bak /
+		// config.yml.bak 这类备份文件会把数据库(含管理员哈希与节点 Token)匿名泄露出去。
+		blockedSubstrings := []string{".db", ".env", ".go", ".yml", ".yaml", ".json", ".conf", ".pem", ".key", ".log", ".bak", ".."}
+		blocked := strings.HasPrefix(filename, ".")
+		for _, s := range blockedSubstrings {
+			if strings.Contains(filename, s) {
+				blocked = true
+				break
+			}
+		}
+		for _, ch := range filename {
+			isSafe := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '_'
+			if !isSafe {
+				blocked = true
+				break
+			}
+		}
+		if !isAllowed || blocked {
 			c.String(http.StatusForbidden, "Access denied")
 			return
 		}
@@ -177,6 +193,9 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 
 	// 5. 前端静态文件托管 (SPA 支持)
 	if webDistFS != nil {
+		// 登记根目录下的静态资源, 只有这些文件允许在未通过安全入口时访问
+		middleware.SetAllowedStaticAssets(scanStaticAssets(webDistFS))
+
 		fileServer := http.FileServer(webDistFS)
 		r.NoRoute(func(c *gin.Context) {
 			path := c.Request.URL.Path
@@ -192,12 +211,41 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 				fileServer.ServeHTTP(c.Writer, c.Request)
 				return
 			}
+			// 看起来像静态资源却不存在的路径直接 404, 不再回落 index.html。
+			// 否则未通过安全入口的 /x.js 也能把面板 HTML 取走 (见 SafeEntranceFilter)。
+			if path != "/" && filepath.Ext(path) != "" {
+				c.String(http.StatusNotFound, "404 page not found")
+				return
+			}
 			c.Request.URL.Path = "/"
 			fileServer.ServeHTTP(c.Writer, c.Request)
 		})
 	}
 
 	return r
+}
+
+// scanStaticAssets 列出前端产物根目录下的静态资源 (index.html 不在免检之列)。
+// 安全入口依赖这份白名单, 只有真实存在的资源才允许绕过入口拦截。
+func scanStaticAssets(webDistFS http.FileSystem) []string {
+	f, err := webDistFS.Open("/")
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	entries, err := f.Readdir(-1)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "index.html" {
+			continue
+		}
+		names = append(names, "/"+e.Name())
+	}
+	return names
 }
 
 // handleAgentInstallScript 动态生成并返回主副节点智能自适应安装脚本
