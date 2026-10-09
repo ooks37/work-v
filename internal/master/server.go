@@ -14,6 +14,7 @@ import (
 	"work-v/internal/master/sub"
 
 	"github.com/gin-gonic/gin"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 //go:embed install.sh
@@ -89,7 +90,23 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 		c.String(http.StatusNotFound, "File not found")
 	})
 
-	// 4. REST API 分组
+	// 5. 原生离线二维码生成接口 (纯本地零外网依赖，杜绝被墙与隐私泄露)
+	r.GET("/api/v1/qrcode", func(c *gin.Context) {
+		text := c.Query("text")
+		if text == "" {
+			c.String(http.StatusBadRequest, "text query parameter is required")
+			return
+		}
+		png, err := qrcode.Encode(text, qrcode.Medium, 256)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "failed to generate qrcode")
+			return
+		}
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Data(http.StatusOK, "image/png", png)
+	})
+
+	// 6. REST API 分组
 	v1 := r.Group("/api/v1")
 	{
 		// 认证公开接口

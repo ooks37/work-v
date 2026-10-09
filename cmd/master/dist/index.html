@@ -317,9 +317,11 @@
 
                 <!-- 节点协议标签 -->
                 <div class="mt-4 flex flex-wrap gap-1.5">
-                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20 font-mono">VLESS-Reality: 443</span>
-                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">Hysteria2: 8443</span>
-                  <span v-if="node.singbox_pid > 0" class="text-[11px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 font-mono">PID: {{ node.singbox_pid }}</span>
+                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20 font-mono">Reality: 2083</span>
+                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">Hy2: 8443</span>
+                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-300 border border-blue-500/20 font-mono">gRPC: 2053</span>
+                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-teal-500/10 text-teal-300 border border-teal-500/20 font-mono">TUIC: 8444</span>
+                  <span v-if="node.singbox_pid > 0" class="text-[11px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">🟢 内核 PID: {{ node.singbox_pid }}</span>
                 </div>
               </div>
 
@@ -655,7 +657,7 @@
           <button @click="qrModal.show = false" class="text-slate-400 hover:text-white text-lg">&times;</button>
         </div>
         <div class="bg-white p-3 rounded-2xl inline-block shadow-2xl my-2">
-          <img :src="'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=' + encodeURIComponent(qrModal.url)" alt="QR Code" class="w-52 h-52 block rounded-lg">
+          <img :src="'/api/v1/qrcode?text=' + encodeURIComponent(qrModal.url)" alt="QR Code" class="w-52 h-52 block rounded-lg">
         </div>
         <p class="text-xs text-slate-400 mt-2">支持手机小火箭 / Sing-box / Clash Verge 扫码导入</p>
         <div class="mt-4 flex gap-2">

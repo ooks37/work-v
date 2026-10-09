@@ -233,8 +233,8 @@ func SafeEntranceFilter() gin.HandlerFunc {
 			return
 		}
 
-		// 3. 白名单免检路径：订阅链接、Agent WS 长连、安装脚本、二进制下载
-		if strings.HasPrefix(path, "/sub/") || strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/download/") || path == "/install.sh" {
+		// 3. 白名单免检路径：订阅链接、Agent WS 长连、安装脚本、二进制下载、原生离线二维码
+		if strings.HasPrefix(path, "/sub/") || strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/download/") || path == "/install.sh" || path == "/api/v1/qrcode" {
 			c.Next()
 			return
 		}
