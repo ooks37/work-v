@@ -15,6 +15,7 @@ import (
 	"work-v/internal/master/model"
 
 	"golang.org/x/crypto/curve25519"
+	"gorm.io/gorm"
 )
 
 // GenerateX25519KeyPair 自动生成 Reality 协议所需的 x25519 公私钥对 (Base64 URL 安全格式)
@@ -142,7 +143,11 @@ type ProtocolShareLink struct {
 // GenerateNodeShareLinks 为指定节点与用户生成所有已启用协议的分享链接
 func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []ProtocolShareLink {
 	if node.Address == "" || node.Address == "自动探测" {
-		node.Address = "156.224.28.20"
+		if d := model.GetSetting("master_domain", ""); d != "" {
+			node.Address = d
+		} else {
+			node.Address = "127.0.0.1"
+		}
 	}
 	if userUUID == "" {
 		userUUID = "11111111-2222-3333-4444-555555555555"
@@ -302,7 +307,7 @@ func BuildNodeConfigPayload(nodeID uint) (*common.NodeConfigPayload, error) {
 	}, nil
 }
 
-// RecordTraffic 集中结算并实施秒级配额熔断
+// RecordTraffic 集中结算并实施秒级配额熔断 (原子累加，杜绝多节点并发更新丢失)
 func RecordTraffic(nodeID uint, users []common.UserDeltaTraffic) {
 	var node model.Node
 	if err := model.DB.First(&node, nodeID).Error; err != nil {
@@ -320,18 +325,21 @@ func RecordTraffic(nodeID uint, users []common.UserDeltaTraffic) {
 			continue
 		}
 
+		// 原子递增流量，防止多节点并发覆盖
+		if err := model.DB.Model(&model.User{}).Where("uuid = ?", rep.UUID).
+			Update("used_traffic", gorm.Expr("used_traffic + ?", delta)).Error; err != nil {
+			continue
+		}
+
 		var u model.User
 		if err := model.DB.Where("uuid = ?", rep.UUID).First(&u).Error; err != nil {
 			continue
 		}
 
-		newTotal := u.UsedTraffic + delta
-		model.DB.Model(&u).Update("used_traffic", newTotal)
-
 		// 检查是否达到流量限制，触发秒级熔断
-		if u.TrafficLimit > 0 && newTotal >= u.TrafficLimit {
+		if u.TrafficLimit > 0 && u.UsedTraffic >= u.TrafficLimit {
 			model.DB.Model(&u).Update("status", "suspended")
-			log.Printf("[Quota] 用户 %s 流量超标 (已用: %d / 上限: %d)，触发全网秒级熔断!", u.Username, newTotal, u.TrafficLimit)
+			log.Printf("[Quota] 用户 %s 流量超标 (已用: %d / 上限: %d)，触发全网秒级熔断!", u.Username, u.UsedTraffic, u.TrafficLimit)
 			hub.GlobalHub.BroadcastCutoffUser(u.UUID)
 		}
 	}

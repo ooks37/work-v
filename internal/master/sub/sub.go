@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +16,22 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
+
+// resolveNodeAddress 智能解析客户端可连接的节点地址 (优先节点显式配置，回退主控域名或当前 Host)
+func resolveNodeAddress(n *model.Node, c *gin.Context) string {
+	addr := strings.TrimSpace(n.Address)
+	if addr != "" && addr != "自动探测" && addr != "127.0.0.1" {
+		return addr
+	}
+	if d := model.GetSetting("master_domain", ""); d != "" {
+		return d
+	}
+	host := c.Request.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
+}
 
 // HandleSubscription 处理多端自适应订阅主入口
 func HandleSubscription(c *gin.Context) {
@@ -69,7 +86,8 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 	var links []string
 
 	for _, n := range nodes {
-		if n.Address == "" {
+		nodeAddr := resolveNodeAddress(&n, c)
+		if nodeAddr == "" {
 			continue
 		}
 		var inbounds []common.InboundConfig
@@ -101,7 +119,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				params.Set("encryption", "none")
 
 				link := fmt.Sprintf("vless://%s@%s:%d?%s#%s",
-					user.UUID, n.Address, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Reality", n.Name)))
+					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Reality", n.Name)))
 				links = append(links, link)
 
 			case "grpc-reality":
@@ -126,25 +144,25 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				params.Set("encryption", "none")
 
 				link := fmt.Sprintf("vless://%s@%s:%d?%s#%s",
-					user.UUID, n.Address, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-gRPC-Reality", n.Name)))
+					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-gRPC-Reality", n.Name)))
 				links = append(links, link)
 
 			case "hysteria2":
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
-					serverName = n.Address
+					serverName = nodeAddr
 				}
 				params := url.Values{}
 				params.Set("insecure", "1")
 				params.Set("sni", serverName)
 
 				link := fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s",
-					user.UUID, n.Address, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Hy2", n.Name)))
+					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Hy2", n.Name)))
 				links = append(links, link)
 
 			case "tuic":
 				link := fmt.Sprintf("tuic://%s:%s@%s:%d?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#%s",
-					user.UUID, user.UUID, n.Address, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-TUIC", n.Name)))
+					user.UUID, user.UUID, nodeAddr, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-TUIC", n.Name)))
 				links = append(links, link)
 
 			case "anytls":
@@ -153,7 +171,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 					serverName = "gateway.icloud.com"
 				}
 				link := fmt.Sprintf("anytls://%s@%s:%d/?sni=%s&insecure=1#%s",
-					user.UUID, n.Address, in.ListenPort, serverName, url.QueryEscape(fmt.Sprintf("%s-AnyTLS", n.Name)))
+					user.UUID, nodeAddr, in.ListenPort, serverName, url.QueryEscape(fmt.Sprintf("%s-AnyTLS", n.Name)))
 				links = append(links, link)
 			}
 		}
@@ -171,7 +189,8 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 	var proxyNames []string
 
 	for _, n := range nodes {
-		if n.Address == "" {
+		nodeAddr := resolveNodeAddress(&n, c)
+		if nodeAddr == "" {
 			continue
 		}
 		var inbounds []common.InboundConfig
@@ -197,7 +216,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				p := map[string]any{
 					"name":                name,
 					"type":                "vless",
-					"server":              n.Address,
+					"server":              nodeAddr,
 					"port":                in.ListenPort,
 					"uuid":                user.UUID,
 					"network":             "tcp",
@@ -230,7 +249,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				p := map[string]any{
 					"name":                name,
 					"type":                "vless",
-					"server":              n.Address,
+					"server":              nodeAddr,
 					"port":                in.ListenPort,
 					"uuid":                user.UUID,
 					"network":             "grpc",
@@ -253,13 +272,13 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				name := fmt.Sprintf("%s-Hy2", n.Name)
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
-					serverName = n.Address
+					serverName = nodeAddr
 				}
 
 				p := map[string]any{
 					"name":             name,
 					"type":             "hysteria2",
-					"server":           n.Address,
+					"server":           nodeAddr,
 					"port":             in.ListenPort,
 					"password":         user.UUID,
 					"sni":              serverName,
@@ -271,15 +290,15 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 			case "tuic":
 				name := fmt.Sprintf("%s-TUIC", n.Name)
 				p := map[string]any{
-					"name":                name,
-					"type":                "tuic",
-					"server":              n.Address,
-					"port":                in.ListenPort,
-					"uuid":                user.UUID,
-					"password":            user.UUID,
-					"alpn":                []string{"h3"},
+					"name":                  name,
+					"type":                  "tuic",
+					"server":                nodeAddr,
+					"port":                  in.ListenPort,
+					"uuid":                  user.UUID,
+					"password":              user.UUID,
+					"alpn":                  []string{"h3"},
 					"congestion-controller": "bbr",
-					"skip-cert-verify":    true,
+					"skip-cert-verify":      true,
 				}
 				proxies = append(proxies, p)
 				proxyNames = append(proxyNames, name)
@@ -336,7 +355,8 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 	var outTags []string
 
 	for _, n := range nodes {
-		if n.Address == "" {
+		nodeAddr := resolveNodeAddress(&n, c)
+		if nodeAddr == "" {
 			continue
 		}
 		var inbounds []common.InboundConfig
@@ -362,7 +382,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				out := map[string]any{
 					"type":        "vless",
 					"tag":         tag,
-					"server":      n.Address,
+					"server":      nodeAddr,
 					"server_port": in.ListenPort,
 					"uuid":        user.UUID,
 					"flow":        "xtls-rprx-vision",
@@ -399,7 +419,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				out := map[string]any{
 					"type":        "vless",
 					"tag":         tag,
-					"server":      n.Address,
+					"server":      nodeAddr,
 					"server_port": in.ListenPort,
 					"uuid":        user.UUID,
 					"transport": map[string]any{
@@ -427,13 +447,13 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				tag := fmt.Sprintf("%s-Hy2", n.Name)
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
-					serverName = n.Address
+					serverName = nodeAddr
 				}
 
 				out := map[string]any{
 					"type":        "hysteria2",
 					"tag":         tag,
-					"server":      n.Address,
+					"server":      nodeAddr,
 					"server_port": in.ListenPort,
 					"password":    user.UUID,
 					"tls": map[string]any{
@@ -450,16 +470,15 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				out := map[string]any{
 					"type":        "tuic",
 					"tag":         tag,
-					"server":      n.Address,
+					"server":      nodeAddr,
 					"server_port": in.ListenPort,
 					"uuid":        user.UUID,
 					"password":    user.UUID,
 					"congestion_control": "bbr",
-					"udp_relay_mode":    "native",
 					"tls": map[string]any{
-						"enabled":  true,
-						"alpn":     []string{"h3"},
-						"insecure": true,
+						"enabled":     true,
+						"alpn":        []string{"h3"},
+						"insecure":    true,
 					},
 				}
 				outbounds = append(outbounds, out)
@@ -474,7 +493,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				out := map[string]any{
 					"type":        "anytls",
 					"tag":         tag,
-					"server":      n.Address,
+					"server":      nodeAddr,
 					"server_port": in.ListenPort,
 					"password":    user.UUID,
 					"tls": map[string]any{

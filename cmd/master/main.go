@@ -28,6 +28,7 @@ func main() {
 	port := flag.Int("port", 8080, "Web 服务监听端口")
 	dbPath := flag.String("db", "data/work-v.db", "SQLite 数据库路径")
 	jwtSecret := flag.String("jwt-secret", "", "自定义 JWT 密钥")
+	domainFlag := flag.String("domain", "", "配置主控外网访问域名 (例如 vpn.example.com，传空则为纯 IP 模式)")
 	showEntry := flag.Bool("entry", false, "查看当前安全入口与管理员访问地址 (类似宝塔 bt default)")
 	setEntry := flag.String("set-entry", "", "修改安全入口路径 (如 /my_secret)")
 	disableEntry := flag.Bool("disable-entry", false, "关闭安全入口拦截")
@@ -43,6 +44,28 @@ func main() {
 		log.Fatalf("初始化数据库失败: %v", err)
 	}
 
+	if *domainFlag != "" {
+		d := strings.TrimSpace(*domainFlag)
+		if d == "none" || d == "clear" || d == "reset" {
+			_ = model.SetSetting("master_domain", "")
+			log.Printf("[Work-V] 主控访问域名已清除，恢复为纯 IP 直连模式")
+		} else {
+			d = strings.TrimPrefix(d, "http://")
+			d = strings.TrimPrefix(d, "https://")
+			d = strings.TrimRight(d, "/")
+			_ = model.SetSetting("master_domain", d)
+			log.Printf("[Work-V] 主控访问域名已配置为: https://%s", d)
+		}
+	}
+
+	getBaseURL := func() string {
+		d := model.GetSetting("master_domain", "")
+		if d != "" {
+			return "https://" + d
+		}
+		return fmt.Sprintf("http://127.0.0.1:%d", *port)
+	}
+
 	// 2. 处理命令行安全入口查询
 	if *showEntry {
 		var safeSetting model.SystemSetting
@@ -52,13 +75,22 @@ func main() {
 		}
 		var admin model.Admin
 		model.DB.First(&admin)
+		d := model.GetSetting("master_domain", "")
 
 		fmt.Println("==================================================")
 		fmt.Println("         Work-V 控制台安全入口与凭据信息          ")
 		fmt.Println("==================================================")
 		fmt.Printf("• 安全入口路径: %s\n", safePath)
-		fmt.Printf("• 外网域名入口: https://qweqwe.shangxinci.com%s\n", safePath)
+		if d != "" {
+			fmt.Printf("• 域名外网入口: https://%s%s (若未配置SSL反代: http://%s:%d%s)\n", d, safePath, d, *port, safePath)
+			fmt.Printf("• 本机回环入口: http://127.0.0.1:%d%s\n", *port, safePath)
+		} else {
+			fmt.Printf("• 控制台外网入口: http://<你的服务器公网IP>:%d%s\n", *port, safePath)
+			fmt.Printf("• 本机回环入口: http://127.0.0.1:%d%s\n", *port, safePath)
+		}
 		fmt.Printf("• 默认管理账号: %s\n", admin.Username)
+		fmt.Println("• 如需绑定域名: work-v domain <你的域名>")
+		fmt.Println("• 如需清除域名: work-v domain none")
 		fmt.Println("• 如需修改入口: work-v-master -set-entry /new_path")
 		fmt.Println("• 如需关闭入口: work-v-master -disable-entry")
 		fmt.Println("• 如需修改密码: work-v-master -set-password <新密码>")
@@ -78,9 +110,10 @@ func main() {
 			Value:     newPath,
 			UpdatedAt: time.Now(),
 		})
+		baseURL := getBaseURL()
 		fmt.Println("==================================================")
 		fmt.Printf("✅ 安全入口已成功更新为: %s\n", newPath)
-		fmt.Printf("外网访问地址: https://qweqwe.shangxinci.com%s\n", newPath)
+		fmt.Printf("外网访问地址: %s%s\n", baseURL, newPath)
 		fmt.Println("==================================================")
 		os.Exit(0)
 	}
@@ -92,8 +125,9 @@ func main() {
 			Value:     "",
 			UpdatedAt: time.Now(),
 		})
+		baseURL := getBaseURL()
 		fmt.Println("==================================================")
-		fmt.Println("✅ 安全入口已关闭！当前可直接通过 https://qweqwe.shangxinci.com/ 访问面板")
+		fmt.Printf("✅ 安全入口已关闭！当前可直接通过 %s/ 访问面板\n", baseURL)
 		fmt.Println("==================================================")
 		os.Exit(0)
 	}
@@ -165,12 +199,13 @@ func main() {
 			fmt.Printf("❌ 创建节点失败: %v\n", err)
 			os.Exit(1)
 		}
+		baseURL := getBaseURL()
 		fmt.Println("================================================================================")
 		fmt.Printf("✅ 从属节点【%s】创建成功！(Node ID: %d)\n", nodeName, newNode.ID)
 		fmt.Printf("• 节点专属 Token: %s\n", token)
 		fmt.Println("• 在目标副节点服务器终端直接执行以下一键纳管指令即可自动接入：")
 		fmt.Println("--------------------------------------------------------------------------------")
-		fmt.Printf("curl -fsSL https://qweqwe.shangxinci.com/install.sh | bash -s -- --token %s\n", token)
+		fmt.Printf("curl -fsSL %s/install.sh | bash -s -- --token %s\n", baseURL, token)
 		fmt.Println("================================================================================")
 		os.Exit(0)
 	}
@@ -181,6 +216,9 @@ func main() {
 
 	if *jwtSecret != "" {
 		middleware.SetJWTSecret(*jwtSecret)
+		_ = model.SetSetting("jwt_secret", *jwtSecret)
+	} else {
+		middleware.SetJWTSecret(model.GetSetting("jwt_secret", ""))
 	}
 
 	// 初始化安全路径配置

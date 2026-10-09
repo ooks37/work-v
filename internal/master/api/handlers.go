@@ -143,51 +143,76 @@ func HandleChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功"})
 }
 
-// HandleGetSafeEntrance 获取当前安全入口状态与完整 URL
+// HandleGetSafeEntrance 获取当前安全入口状态与完整 URL (含域名模式)
 func HandleGetSafeEntrance(c *gin.Context) {
 	scheme := "http"
 	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
+	host := c.Request.Host
+	domain := model.GetSetting("master_domain", "")
+	if domain != "" {
+		scheme = "https"
+		host = domain
+	}
 	enabled, safePath := middleware.GetSafePath()
-	url := middleware.GetSafeEntranceURL(scheme, c.Request.Host)
+	url := middleware.GetSafeEntranceURL(scheme, host)
 
 	c.JSON(http.StatusOK, gin.H{
 		"enabled":   enabled,
 		"safe_path": safePath,
+		"domain":    domain,
 		"url":       url,
 	})
 }
 
-// HandleSetSafeEntrance 修改安全入口路径
+// HandleSetSafeEntrance 修改安全入口路径与访问域名
 func HandleSetSafeEntrance(c *gin.Context) {
 	var req struct {
 		SafePath string `json:"safe_path"`
+		Domain   string `json:"domain"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数格式错误"})
 		return
 	}
 
-	middleware.SetSafePath(req.SafePath)
+	if req.SafePath != "" {
+		middleware.SetSafePath(req.SafePath)
+		_, newPath := middleware.GetSafePath()
+		model.DB.Save(&model.SystemSetting{
+			Key:       "safe_path",
+			Value:     newPath,
+			UpdatedAt: time.Now(),
+		})
+	}
 
-	// 持久化存储至数据库
-	_, newPath := middleware.GetSafePath()
-	model.DB.Save(&model.SystemSetting{
-		Key:       "safe_path",
-		Value:     newPath,
-		UpdatedAt: time.Now(),
-	})
+	if req.Domain != "" {
+		cleanDomain := strings.TrimSpace(req.Domain)
+		cleanDomain = strings.TrimPrefix(cleanDomain, "http://")
+		cleanDomain = strings.TrimPrefix(cleanDomain, "https://")
+		cleanDomain = strings.TrimRight(cleanDomain, "/")
+		_ = model.SetSetting("master_domain", cleanDomain)
+	}
 
 	scheme := "http"
 	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
-	url := middleware.GetSafeEntranceURL(scheme, c.Request.Host)
+	host := c.Request.Host
+	domain := model.GetSetting("master_domain", "")
+	if domain != "" {
+		scheme = "https"
+		host = domain
+	}
+
+	_, newPath := middleware.GetSafePath()
+	url := middleware.GetSafeEntranceURL(scheme, host)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":   "安全路径已更新",
+		"message":   "安全入口与访问配置已更新",
 		"safe_path": newPath,
+		"domain":    domain,
 		"url":       url,
 	})
 }
@@ -586,15 +611,22 @@ func HandleUpgradeSingbox(c *gin.Context) {
 		}
 
 		// 查找解压出的可执行文件
-		findCmd := exec.Command("sh", "-c", fmt.Sprintf("find %s -type f -name sing-box | head -n 1", tmpDir))
-		out, err := findCmd.Output()
-		if err != nil || len(out) == 0 {
+		var newBin string
+		_ = filepath.Walk(tmpDir, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && info.Name() == "sing-box" {
+				newBin = p
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if newBin == "" {
 			return
 		}
-		newBin := strings.TrimSpace(string(out))
 
-		// 验证版本输出
-		if err := exec.Command(newBin, "version").Run(); err != nil {
+		// 严格校验版本输出合法性
+		verOut, err := exec.Command(newBin, "version").CombinedOutput()
+		if err != nil || !strings.Contains(string(verOut), "sing-box") {
+			log.Printf("[Singbox Upgrade] 升级产物校验失败，终止覆盖: %v", err)
 			return
 		}
 

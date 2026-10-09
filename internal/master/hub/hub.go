@@ -26,11 +26,12 @@ var upgrader = websocket.Upgrader{
 
 // AgentConn 单个节点的活跃连接实例
 type AgentConn struct {
-	NodeID    uint
-	NodeToken string
-	Conn      *websocket.Conn
-	SendChan  chan *common.WSMessage
-	LastSeen  time.Time
+	NodeID       uint
+	NodeToken    string
+	Conn         *websocket.Conn
+	SendChan     chan *common.WSMessage
+	LastSeen     time.Time
+	lastDBUpdate time.Time
 }
 
 // Hub 全局节点调度连接池
@@ -125,19 +126,21 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"last_seen_at": &now,
 	}
 
-	remoteIP := r.Header.Get("X-Forwarded-For")
-	if remoteIP == "" {
+	// 提取真实对端 IP (仅当来自本机反向代理时信任转发头，防止直连伪造)
+	peerHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+	remoteIP := peerHost
+	if (peerHost == "127.0.0.1" || peerHost == "::1") && r.Header.Get("X-Forwarded-For") != "" {
+		xfwd := r.Header.Get("X-Forwarded-For")
+		if idx := strings.Index(xfwd, ","); idx != -1 {
+			xfwd = strings.TrimSpace(xfwd[:idx])
+		}
+		if xfwd != "" {
+			remoteIP = xfwd
+		}
+	} else if (peerHost == "127.0.0.1" || peerHost == "::1") && r.Header.Get("X-Real-IP") != "" {
 		remoteIP = r.Header.Get("X-Real-IP")
 	}
-	if remoteIP == "" {
-		remoteIP = r.RemoteAddr
-	}
-	if idx := strings.Index(remoteIP, ","); idx != -1 {
-		remoteIP = strings.TrimSpace(remoteIP[:idx])
-	}
-	if host, _, err := net.SplitHostPort(remoteIP); err == nil {
-		remoteIP = host
-	}
+
 	if remoteIP != "" && remoteIP != "127.0.0.1" && (node.Address == "" || node.Address == "127.0.0.1" || strings.Contains(node.Address, "自动探测")) {
 		updates["address"] = remoteIP
 		node.Address = remoteIP
@@ -265,18 +268,22 @@ func (a *AgentConn) readPump(h *Hub) {
 			var stats common.NodeHardwareStats
 			if err := json.Unmarshal(msg.Payload, &stats); err == nil {
 				now := time.Now()
-				model.DB.Model(&model.Node{}).Where("id = ?", a.NodeID).Updates(map[string]any{
-					"status":       "online",
-					"last_seen_at": &now,
-					"cpu_percent":  stats.CPUPercent,
-					"mem_used":     stats.MemUsedBytes,
-					"mem_total":    stats.MemTotalBytes,
-					"net_rx_rate":  stats.NetRxRate,
-					"net_tx_rate":  stats.NetTxRate,
-					"uptime_sec":   stats.UptimeSec,
-					"agent_ver":    stats.Version,
-					"singbox_pid":  stats.SingboxPid,
-				})
+				// 节流写入：心跳虽高频上报，但数据库每 15 秒更新一次，大幅减少高并发 SQLite 写入锁冲突
+				if now.Sub(a.lastDBUpdate) >= 15*time.Second {
+					a.lastDBUpdate = now
+					model.DB.Model(&model.Node{}).Where("id = ?", a.NodeID).Updates(map[string]any{
+						"status":       "online",
+						"last_seen_at": &now,
+						"cpu_percent":  stats.CPUPercent,
+						"mem_used":     stats.MemUsedBytes,
+						"mem_total":    stats.MemTotalBytes,
+						"net_rx_rate":  stats.NetRxRate,
+						"net_tx_rate":  stats.NetTxRate,
+						"uptime_sec":   stats.UptimeSec,
+						"agent_ver":    stats.Version,
+						"singbox_pid":  stats.SingboxPid,
+					})
+				}
 			}
 
 		case common.MsgTypeTraffic:

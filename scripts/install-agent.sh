@@ -46,6 +46,23 @@ if ! command -v sing-box &> /dev/null && [ ! -f "/usr/local/bin/sing-box" ]; the
   rm -rf /tmp/sb*
 fi
 
+# 准备 work-v-agent 二进制
+if [ -f "./work-v-agent" ]; then
+  cp -f ./work-v-agent "$INSTALL_DIR/"
+elif [ -f "./work-v-agent-linux" ]; then
+  cp -f ./work-v-agent-linux "$INSTALL_DIR/work-v-agent"
+else
+  echo "⚡ 正在从主控端拉取 work-v-agent 二进制..."
+  curl -fsSL "$SERVER/download/agent-$AGENT_ARCH" -o "$INSTALL_DIR/work-v-agent" 2>/dev/null || \
+  curl -fsSL "$SERVER/download/work-v-agent" -o "$INSTALL_DIR/work-v-agent" 2>/dev/null || true
+fi
+
+if [ ! -f "$INSTALL_DIR/work-v-agent" ]; then
+  echo "❌ 无法获取 work-v-agent 运行二进制，请确认主控地址可达"
+  exit 1
+fi
+chmod +x "$INSTALL_DIR/work-v-agent"
+
 # 安装 systemd 服务
 cat > /etc/systemd/system/work-v-agent.service <<EOF
 [Unit]

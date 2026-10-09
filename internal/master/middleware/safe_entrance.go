@@ -1,17 +1,20 @@
 package middleware
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+
+	"work-v/internal/master/model"
 
 	"github.com/gin-gonic/gin"
 )
 
 const (
 	SafeCookieName = "workv_entrance_token"
-	SafeCookieVal  = "workv_authorized_entry_pass"
 )
 
 type SafeEntranceConfig struct {
@@ -23,6 +26,13 @@ type SafeEntranceConfig struct {
 var GlobalSafeEntrance = &SafeEntranceConfig{
 	Enabled:  true,
 	SafePath: "/safe_entry",
+}
+
+// computeSafeEntryToken 根据当前安全入口路径与实例随机盐计算动态凭证
+func computeSafeEntryToken(path string) string {
+	salt := model.GetSetting("entrance_salt", "workv_default_salt")
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%s", path, salt)))
+	return hex.EncodeToString(h[:16])
 }
 
 // SetSafePath 设置安全入口路径 (如果传空则关闭安全路径保护)
@@ -54,13 +64,15 @@ func GetSafePath() (bool, string) {
 
 // HandleSafeEntryVisit 当访问配置的安全入口时，种入专属凭据并跳转到控制台
 func HandleSafeEntryVisit(c *gin.Context) {
+	_, safePath := GetSafePath()
+	token := computeSafeEntryToken(safePath)
 	isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
-	// 设置 Cookie，有效期 30 天
+
+	// 设置动态 Cookie，有效期 30 天
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(SafeCookieName, SafeCookieVal, 30*24*3600, "/", "", isHTTPS, false)
+	c.SetCookie(SafeCookieName, token, 30*24*3600, "/", "", isHTTPS, false)
 	c.SetCookie("workv_entry_ok", "1", 30*24*3600, "/", "", isHTTPS, false)
-	// 302 重定向到控制台主入口 (带上安全放行标记，防止部分浏览器重定向首包丢 Cookie)
-	c.Redirect(http.StatusFound, "/?entry=verified")
+	c.Redirect(http.StatusFound, "/")
 }
 
 // BaotaSafeEntranceHTML 类似宝塔面板安全入口拦截提示页面
@@ -184,14 +196,14 @@ const BaotaSafeEntranceHTML = `<!DOCTYPE html>
     
     <div class="info-box">
       <strong>💡 管理员提示：</strong><br>
-      • 默认安全入口：<span class="code-badge">/safe_entry</span><br>
+      • 请在控制台地址后附带正确的安全入口路径进行访问。<br>
       • 若忘记配置的安全入口，可登录服务器终端执行：<br>
-      &nbsp;&nbsp;<span class="code-badge">work-v-master -entry</span>
+      &nbsp;&nbsp;<span class="code-badge">work-v entry</span> 或 <span class="code-badge">work-v-master -entry</span>
     </div>
 
     <form onsubmit="event.preventDefault(); var val=document.getElementById('entryInput').value.trim(); if(val){ window.location.href=(val.startsWith('/')?val:('/'+val)); }">
       <div class="quick-entry">
-        <input id="entryInput" type="text" class="quick-input" placeholder="输入安全路径 (如 /safe_entry)" />
+        <input id="entryInput" type="text" class="quick-input" placeholder="输入安全路径 (如 /your_entry)" />
         <button type="submit" class="quick-btn">验证并进入</button>
       </div>
     </form>
@@ -239,29 +251,21 @@ func SafeEntranceFilter() gin.HandlerFunc {
 			return
 		}
 
-		// 4. 允许通过 URL 放行标记进入 (重定向或直接带参访问)
-		if c.Query("entry") == "verified" {
-			isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
-			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie(SafeCookieName, SafeCookieVal, 30*24*3600, "/", "", isHTTPS, false)
-			c.SetCookie("workv_entry_ok", "1", 30*24*3600, "/", "", isHTTPS, false)
-			c.Next()
-			return
-		}
+		expectedToken := computeSafeEntryToken(safePath)
 
-		// 5. 检查是否持有授权 Cookie
+		// 4. 检查是否持有授权 Cookie
 		cookieVal, err := c.Cookie(SafeCookieName)
-		if err == nil && cookieVal == SafeCookieVal {
+		if err == nil && cookieVal == expectedToken {
 			c.Next()
 			return
 		}
 
-		// 6. 允许通过 URL 参数紧急带入密钥访问 (例如 ?safe_key=safe_entry)
+		// 5. 允许通过 URL 参数紧急带入密钥访问 (例如 ?safe_key=/safe_entry)
 		keyParam := c.Query("safe_key")
 		if keyParam != "" && "/"+strings.TrimPrefix(keyParam, "/") == safePath {
 			isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
 			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie(SafeCookieName, SafeCookieVal, 30*24*3600, "/", "", isHTTPS, false)
+			c.SetCookie(SafeCookieName, expectedToken, 30*24*3600, "/", "", isHTTPS, false)
 			c.SetCookie("workv_entry_ok", "1", 30*24*3600, "/", "", isHTTPS, false)
 			c.Next()
 			return

@@ -66,13 +66,36 @@
 
 ---
 
-## 🚀 快速开始
+## 🚀 快速开始与一键部署
 
-### 方式一：Docker Compose (推荐，30秒启动)
+### 方式一：全环境自适应一键安装 (推荐，支持纯 IP 或自定义域名)
+
+本脚本全面支持 Ubuntu / Debian / CentOS / Alpine / Rocky，自动检测系统架构 (amd64 / arm64)、低配小鸡 Swap 自动挂载、TCP BBR 加速与防火墙端口放行。
+
+#### 1. 交互式部署向导 (自动引导选择纯 IP 或域名)
+```bash
+curl -fsSL https://raw.githubusercontent.com/ooks37/work-v/main/scripts/install.sh | bash
+```
+> 安装向导将自动询问是否绑定域名：
+> - 若选择**纯 IP 模式**：直接以 `http://<服务器IP>:8080/safe_entry` 访问。
+> - 若选择**域名绑定模式**：输入您的域名（如 `panel.example.com`），脚本将自动配置主控并在系统中生成 Nginx 反代配置。
+
+#### 2. 命令行静默部署 (可选纯 IP 或指定域名)
+```bash
+# 模式 A：纯 IP 直连部署 (无域名，开箱即用)
+curl -fsSL https://raw.githubusercontent.com/ooks37/work-v/main/scripts/install.sh | bash -s -- --master
+
+# 模式 B：自定义域名 + Nginx 自动反代部署
+curl -fsSL https://raw.githubusercontent.com/ooks37/work-v/main/scripts/install.sh | bash -s -- --master --domain panel.example.com --nginx
+```
+
+---
+
+### 方式二：Docker Compose 极速启动
 
 1. 克隆项目或上传配置文件：
    ```bash
-   git clone https://github.com/owl234/work-v.git
+   git clone https://github.com/ooks37/work-v.git
    cd work-v
    ```
 
@@ -82,21 +105,53 @@
    ```
 
 3. 访问 Web 控制台：
-   - 浏览器打开：`http://<你的服务器IP>:8080`
+   - 浏览器打开：`http://<你的服务器IP>:8080/safe_entry`
    - **默认管理员账号**：`admin`
    - **默认初始密码**：`admin123456`
-   *(首次登录后，强烈建议在右上角菜单中修改管理员密码！)*
 
 ---
 
-### 方式二：原生 Linux 二进制部署
+### 方式三：原生 Linux 二进制部署
 
 ```bash
-# 1. 编译或拉取二进制
+# 1. 编译二进制
 go build -o work-v-master ./cmd/master
 
-# 2. 启动主控
+# 2. 启动主控 (支持 -domain 可选绑定域名)
+# 纯 IP 模式：
 ./work-v-master -port 8080 -db ./data/work-v.db
+
+# 域名模式：
+./work-v-master -port 8080 -db ./data/work-v.db -domain panel.example.com
+```
+
+---
+
+## 🛠️ 终端运维命令 (`work-v`)
+
+主控部署完成后，系统已自动注册类似宝塔 `bt` 的运维指令 `work-v`：
+
+```bash
+# 打开交互式运维菜单
+work-v
+
+# 查看控制台访问入口与安全凭据
+work-v default
+
+# 绑定 / 修改外网访问域名 (输入 none 可清除域名恢复纯 IP 访问)
+work-v domain panel.example.com
+work-v domain none
+
+# 安全入口与密码管理
+work-v set-entry /my_secret_path   # 修改安全入口路径
+work-v disable-entry               # 一键关闭安全入口限制
+work-v passwd                      # 交互式修改管理员密码
+work-v reset-admin                 # 重置管理员密码为默认值
+
+# 服务与节点运维
+work-v restart                     # 重启主控与从节点服务
+work-v status                      # 查看运行状态与内存占用
+work-v logs                        # 实时查看服务日志
 ```
 
 ---

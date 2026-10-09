@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"work-v/internal/master/api"
 	"work-v/internal/master/hub"
 	"work-v/internal/master/middleware"
+	"work-v/internal/master/model"
 	"work-v/internal/master/sub"
 
 	"github.com/gin-gonic/gin"
@@ -43,20 +45,41 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 	r.GET("/install.sh", handleAgentInstallScript)
 	r.GET("/api/v1/install.sh", handleAgentInstallScript)
 
-	// 4. 二进制产物、CLI 工具与安装脚本分发
+	// 4. 二进制产物、CLI 工具与安装脚本安全分发 (严格白名单限制，杜绝任意文件与数据库读取)
 	r.GET("/download/:filename", func(c *gin.Context) {
-		filename := c.Param("filename")
-		if strings.Contains(filename, "..") || strings.Contains(filename, "/") {
+		rawName := c.Param("filename")
+		filename := filepath.Base(filepath.Clean(rawName))
+
+		if filename == "." || filename == "/" || filename == "\\" || strings.Contains(rawName, "..") {
 			c.String(http.StatusBadRequest, "Invalid filename")
 			return
 		}
+
 		if filename == "install.sh" {
 			handleAgentInstallScript(c)
 			return
 		}
+
+		// 严格白名单校验
+		allowedPrefixes := []string{"agent-", "work-v-agent", "master-", "work-v-master", "work-v", "bt-v"}
+		isAllowed := false
+		for _, prefix := range allowedPrefixes {
+			if strings.HasPrefix(filename, prefix) {
+				isAllowed = true
+				break
+			}
+		}
+
+		// 明确拒绝数据库、配置文件、源代码与隐藏文件
+		if !isAllowed || strings.HasSuffix(filename, ".db") || strings.HasSuffix(filename, ".env") ||
+			strings.HasSuffix(filename, ".go") || strings.HasSuffix(filename, ".yml") || strings.HasPrefix(filename, ".") {
+			c.String(http.StatusForbidden, "Access denied")
+			return
+		}
+
 		candidates := []string{
-			filepath.Join(".", filename),
 			filepath.Join("/opt/work-v-master", filename),
+			filepath.Join(".", filename),
 		}
 		if strings.HasPrefix(filename, "agent-") || strings.HasPrefix(filename, "work-v-agent") {
 			candidates = append(candidates,
@@ -184,6 +207,15 @@ func handleAgentInstallScript(c *gin.Context) {
 	host := c.Request.Host
 	masterURL := fmt.Sprintf("%s://%s", scheme, host)
 
+	// 优先使用配置的外网主控域名
+	if customDomain := model.GetSetting("master_domain", ""); customDomain != "" {
+		if strings.HasPrefix(customDomain, "http://") || strings.HasPrefix(customDomain, "https://") {
+			masterURL = customDomain
+		} else {
+			masterURL = "https://" + customDomain
+		}
+	}
+
 	// 优先从本地/安装目录读取最新 install.sh，若无则使用编译期内置嵌入的 defaultInstallScript
 	script := defaultInstallScript
 	candidates := []string{
@@ -199,7 +231,8 @@ func handleAgentInstallScript(c *gin.Context) {
 	}
 
 	// 动态注入主控端地址
-	script = strings.Replace(script, `DEFAULT_SERVER="https://qweqwe.shangxinci.com"`, fmt.Sprintf(`DEFAULT_SERVER="%s"`, masterURL), 1)
+	re := regexp.MustCompile(`DEFAULT_SERVER="[^"]*"`)
+	script = re.ReplaceAllString(script, fmt.Sprintf(`DEFAULT_SERVER="%s"`, masterURL))
 
 	c.Header("Content-Type", "text/plain; charset=utf-8")
 	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")

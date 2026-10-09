@@ -13,13 +13,15 @@ COLOR_CYAN="\033[36m"
 COLOR_BOLD="\033[1m"
 COLOR_RESET="\033[0m"
 
-DEFAULT_SERVER="https://qweqwe.shangxinci.com"
+DEFAULT_SERVER=""
 SERVER="${DEFAULT_SERVER}"
 TOKEN=""
 ROLE=""
 PORT=8080
 SAFE_PATH="/safe_entry"
 CUSTOM_PORT=""
+DOMAIN=""
+SETUP_NGINX=0
 FORCE_MIRROR=0
 DISABLE_SWAP=0
 DISABLE_BBR=0
@@ -170,6 +172,86 @@ open_firewall_ports() {
     fi
 }
 
+# 智能配置 Nginx 反向代理与 WebSocket 升级
+configure_nginx() {
+    local dom="$1"
+    local prt="$2"
+    [ -z "$dom" ] && return 0
+
+    local nginx_conf_dir=""
+    if [ -d "/etc/nginx/conf.d" ]; then
+        nginx_conf_dir="/etc/nginx/conf.d"
+    elif [ -d "/www/server/panel/vhost/nginx" ]; then
+        nginx_conf_dir="/www/server/panel/vhost/nginx"
+    elif [ -d "/etc/nginx/sites-available" ]; then
+        nginx_conf_dir="/etc/nginx/sites-available"
+    fi
+
+    if [ -z "$nginx_conf_dir" ] && ! command -v nginx &>/dev/null; then
+        echo -e "💡 ${COLOR_YELLOW}提示: 未检测到系统 Nginx，已跳过 Nginx 配置文件自动生成。${COLOR_RESET}"
+        echo -e "   后续如需配置反代，可将域名反代至 127.0.0.1:${prt} 并开启 WebSocket 升级转发。"
+        return 0
+    fi
+
+    local do_nginx="Y"
+    if [ "$SETUP_NGINX" -ne 1 ]; then
+        read_input "检测到当前服务器具备 Nginx，是否自动生成反向代理配置文件？[Y/n]: " do_nginx "Y"
+    fi
+    if [[ "$do_nginx" =~ ^[nN]$ ]]; then
+        return 0
+    fi
+
+    [ -z "$nginx_conf_dir" ] && nginx_conf_dir="/etc/nginx/conf.d"
+    mkdir -p "$nginx_conf_dir"
+
+    local conf_file="${nginx_conf_dir}/work-v.conf"
+    cat > "$conf_file" <<EOF
+server {
+    listen 80;
+    server_name ${dom};
+
+    client_max_body_size 50M;
+
+    location / {
+        proxy_pass http://127.0.0.1:${prt};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        # WebSocket 协议升级支持 (长连心跳与下发通道)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_buffering off;
+    }
+}
+EOF
+
+    if [ "$nginx_conf_dir" = "/etc/nginx/sites-available" ]; then
+        mkdir -p /etc/nginx/sites-enabled
+        ln -sf "$conf_file" /etc/nginx/sites-enabled/work-v.conf 2>/dev/null || true
+    fi
+
+    open_firewall_ports 80
+    open_firewall_ports 443
+
+    if command -v nginx &>/dev/null; then
+        if nginx -t &>/dev/null; then
+            systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+            echo -e "✅ ${COLOR_GREEN}Nginx 反代配置已就绪并已重载: ${conf_file}${COLOR_RESET}"
+            echo -e "💡 ${COLOR_CYAN}若需配置免费 SSL 证书，可执行: certbot --nginx -d ${dom}${COLOR_RESET}"
+        else
+            echo -e "⚠️ ${COLOR_YELLOW}Nginx 反代配置已生成 (${conf_file})，请检查主配置后执行 nginx -s reload${COLOR_RESET}"
+        fi
+    else
+        echo -e "✅ ${COLOR_GREEN}Nginx 配置文件已就绪: ${conf_file}${COLOR_RESET}"
+    fi
+}
+
 install_master() {
     echo -e "\n${COLOR_YELLOW}🚀 开始部署【主节点 (Master Hub)】...${COLOR_RESET}"
     tune_server_system
@@ -177,6 +259,19 @@ install_master() {
 
     INSTALL_DIR="/opt/work-v-master"
     mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/data" "$INSTALL_DIR/scripts"
+
+    # 如果未指定域名，且是终端交互环境，询问是否配置外网域名
+    if [ -z "$DOMAIN" ]; then
+        echo -e "\n${COLOR_CYAN}🌐 [域名与访问方式配置]${COLOR_RESET}"
+        echo -e "Work-V 支持两种访问模式："
+        echo -e "  1. ${COLOR_GREEN}纯 IP 模式${COLOR_RESET}：无需域名，通过 IP:端口 + 安全入口 直接访问 (适合内网或个人轻量使用)"
+        echo -e "  2. ${COLOR_GREEN}域名绑定模式${COLOR_RESET}：绑定自定义域名，可自动生成 Nginx 反向代理配置并支持 SSL"
+        read_input "是否需要绑定自定义域名？[y/N]: " use_domain "N"
+        if [[ "$use_domain" =~ ^[yY]$ ]]; then
+            read_input "请输入您的外网域名 (例如 panel.example.com): " DOMAIN ""
+            DOMAIN=$(echo "$DOMAIN" | tr -d ' ' | sed -E 's|^https?://||; s|/$||')
+        fi
+    fi
 
     echo -e "📦 准备 Master 二进制运行文件..."
     if [ -f "./work-v-master" ]; then
@@ -210,6 +305,12 @@ install_master() {
     ln -sf /usr/local/bin/work-v /usr/local/bin/workv 2>/dev/null || true
     ln -sf /usr/local/bin/work-v /usr/local/bin/bt-v 2>/dev/null || true
 
+    # 构建启动命令
+    local exec_cmd="$INSTALL_DIR/work-v-master -port $PORT -db $INSTALL_DIR/data/work-v.db"
+    if [ -n "$DOMAIN" ]; then
+        exec_cmd="$exec_cmd -domain $DOMAIN"
+    fi
+
     # 注册 systemd 服务
     cat > /etc/systemd/system/work-v-master.service <<EOF
 [Unit]
@@ -220,7 +321,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/work-v-master -port $PORT -db $INSTALL_DIR/data/work-v.db
+ExecStart=$exec_cmd
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
@@ -234,9 +335,21 @@ EOF
     systemctl restart work-v-master
     sleep 2
 
+    # 若配置了域名，自动适配或引导 Nginx 反代配置
+    if [ -n "$DOMAIN" ]; then
+        configure_nginx "$DOMAIN" "$PORT"
+    fi
+
     echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
     echo -e "${COLOR_GREEN}🎉 Work-V 主控端已成功部署并启动！${COLOR_RESET}"
     echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
+    if [ -n "$DOMAIN" ]; then
+        echo -e "• 外网访问域名: ${COLOR_CYAN}$DOMAIN${COLOR_RESET}"
+        echo -e "• 控制台入口:   ${COLOR_GREEN}http://$DOMAIN$SAFE_PATH${COLOR_RESET} (配置SSL后: https://$DOMAIN$SAFE_PATH)"
+    else
+        echo -e "• 访问方式:     ${COLOR_YELLOW}原生 IP + 端口直连${COLOR_RESET}"
+        echo -e "• 控制台入口:   ${COLOR_GREEN}http://$LOCAL_IP:$PORT$SAFE_PATH${COLOR_RESET}"
+    fi
     if [ -x /usr/local/bin/work-v ]; then
         /usr/local/bin/work-v default 2>/dev/null || true
     else
@@ -244,7 +357,7 @@ EOF
         echo "• 管理账号: admin"
         echo "• 默认密码: admin123456"
     fi
-    echo -e "• 终端运维命令: ${COLOR_CYAN}work-v${COLOR_RESET} (类似宝塔 bt 指令，支持状态、节点、密码、安全入口查询)"
+    echo -e "• 终端运维命令: ${COLOR_CYAN}work-v${COLOR_RESET} (类似宝塔 bt 指令，支持域名、状态、节点、密码、安全入口管理)"
     echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
 }
 
@@ -253,7 +366,15 @@ install_agent() {
     tune_server_system
 
     if [ -z "$SERVER" ]; then
-        read_input "请输入主控端地址 [默认 $DEFAULT_SERVER]: " SERVER "$DEFAULT_SERVER"
+        local def_srv="$DEFAULT_SERVER"
+        if [ -z "$def_srv" ]; then
+            if [ -n "$LOCAL_IP" ]; then
+                def_srv="http://$LOCAL_IP:$PORT"
+            else
+                def_srv="http://127.0.0.1:8080"
+            fi
+        fi
+        read_input "请输入主控端地址 [默认 $def_srv]: " SERVER "$def_srv"
     fi
     if [ -z "$TOKEN" ]; then
         read_input "请输入副节点连接令牌 Token (从主控后台复制): " TOKEN ""
@@ -380,6 +501,43 @@ uninstall_all() {
     echo -e "${COLOR_GREEN}✅ 服务与守护已移除！数据文件保留在 /opt/work-v-*。${COLOR_RESET}"
 }
 
+# 域名与 Nginx 反代配置向导
+configure_domain_menu() {
+    echo -e "\n${COLOR_CYAN}================================================================================${COLOR_RESET}"
+    echo -e "                ${COLOR_GREEN}Work-V 主控外网访问域名与反代管理${COLOR_RESET}                "
+    echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
+    echo "当前支持绑定自定义域名（自动生成 Nginx 反代），或输入 none 恢复原生 IP:端口 直连模式。"
+    read_input "请输入域名 (例如 panel.example.com，输入 none 或留空清除域名): " new_dom ""
+    new_dom=$(echo "$new_dom" | tr -d ' ' | sed -E 's|^https?://||; s|/$||')
+
+    if [ -f "/opt/work-v-master/work-v-master" ]; then
+        if [ "$new_dom" = "none" ] || [ "$new_dom" = "clear" ] || [ -z "$new_dom" ]; then
+            /opt/work-v-master/work-v-master -domain "none" -db "/opt/work-v-master/data/work-v.db"
+            if [ -f "/etc/systemd/system/work-v-master.service" ]; then
+                sed -i "s| -domain [^ ]*||g" /etc/systemd/system/work-v-master.service 2>/dev/null || true
+                systemctl daemon-reload 2>/dev/null || true
+            fi
+            systemctl restart work-v-master 2>/dev/null || true
+            echo -e "${COLOR_GREEN}✅ 已清除域名绑定，恢复为纯 IP 直连访问模式！${COLOR_RESET}"
+        else
+            /opt/work-v-master/work-v-master -domain "$new_dom" -db "/opt/work-v-master/data/work-v.db"
+            if [ -f "/etc/systemd/system/work-v-master.service" ]; then
+                sed -i "s| -domain [^ ]*||g" /etc/systemd/system/work-v-master.service 2>/dev/null || true
+                sed -i "s|work-v.db|work-v.db -domain $new_dom|g" /etc/systemd/system/work-v-master.service 2>/dev/null || true
+                systemctl daemon-reload 2>/dev/null || true
+            fi
+            systemctl restart work-v-master 2>/dev/null || true
+            configure_nginx "$new_dom" "$PORT"
+            echo -e "${COLOR_GREEN}✅ 域名配置已保存并已重启主控服务！${COLOR_RESET}"
+        fi
+        if [ -x /usr/local/bin/work-v ]; then
+            /usr/local/bin/work-v default 2>/dev/null || true
+        fi
+    else
+        echo -e "${COLOR_RED}❌ 未检测到 /opt/work-v-master/work-v-master 二进制${COLOR_RESET}"
+    fi
+}
+
 # 智能交互向导菜单
 interactive_menu() {
     detect_installed
@@ -395,8 +553,9 @@ interactive_menu() {
         echo -e "   [2] 重启 主控端服务"
         echo -e "   [3] 查看 主控端实时运行日志"
         echo -e "   [4] 查看 管理凭据与安全入口地址"
-        echo -e "   [5] 一键开启 TCP BBR 极速拥塞控制"
-        echo -e "   [6] 卸载 主控端服务"
+        echo -e "   [5] 绑定 / 修改外网自定义域名与 Nginx 反代"
+        echo -e "   [6] 一键开启 TCP BBR 极速拥塞控制"
+        echo -e "   [7] 卸载 主控端服务"
         echo -e "   [0] 退出"
         echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
         read_input "请输入编号 [默认 1]: " choice "1"
@@ -404,9 +563,10 @@ interactive_menu() {
             1) install_master ;;
             2) systemctl restart work-v-master; echo -e "${COLOR_GREEN}✅ 已重启！${COLOR_RESET}" ;;
             3) journalctl -u work-v-master -f -n 40 ;;
-            4) /usr/local/bin/work-v default 2>/dev/null || echo "请在浏览器访问: $SERVER$SAFE_PATH" ;;
-            5) tune_server_system ;;
-            6) uninstall_all ;;
+            4) /usr/local/bin/work-v default 2>/dev/null || echo "请在浏览器访问: $SAFE_PATH" ;;
+            5) configure_domain_menu ;;
+            6) tune_server_system ;;
+            7) uninstall_all ;;
             0) exit 0 ;;
             *) echo -e "${COLOR_RED}无效输入${COLOR_RESET}" ;;
         esac
@@ -441,18 +601,19 @@ interactive_menu() {
 
     # 3. 全新机器：智能网络探测推断
     SERVER_HOST=$(echo "$SERVER" | awk -F[/:] '{print $4}')
-    SERVER_IP=$(getent ahostsv4 "$SERVER_HOST" 2>/dev/null | awk '{print $1}' | head -n 1 || true)
-    RECOMMENDED_ROLE="agent"
-    DEFAULT_NUM="2"
+    SERVER_IP=""
+    [ -n "$SERVER_HOST" ] && SERVER_IP=$(getent ahostsv4 "$SERVER_HOST" 2>/dev/null | awk '{print $1}' | head -n 1 || true)
+    RECOMMENDED_ROLE="master"
+    DEFAULT_NUM="1"
 
-    if [ -n "$LOCAL_IP" ] && [ -n "$SERVER_IP" ] && [ "$LOCAL_IP" = "$SERVER_IP" ]; then
-        RECOMMENDED_ROLE="master"
-        DEFAULT_NUM="1"
-        echo -e " 💡 ${COLOR_GREEN}智能推断: 本机公网 IP ($LOCAL_IP) 匹配主控域名解析 IP！${COLOR_RESET}"
-        echo -e "    推荐安装角色: ${COLOR_BOLD}${COLOR_GREEN}【主节点 (Master Hub)】${COLOR_RESET}"
-    else
+    if [ -n "$SERVER_IP" ] && [ -n "$LOCAL_IP" ] && [ "$LOCAL_IP" != "$SERVER_IP" ]; then
+        RECOMMENDED_ROLE="agent"
+        DEFAULT_NUM="2"
         echo -e " 💡 ${COLOR_GREEN}智能推断: 本机为外部从属服务器 (IP: $LOCAL_IP，主控 IP: $SERVER_IP)${COLOR_RESET}"
-        echo -e "    推荐安装角色: ${COLOR_BOLD}${COLOR_GREEN}【副节点 (Agent Node)】${COLOR_RESET}"
+        echo -e "    推荐安装角色: ${COLOR_BOLD}${COLOR_GREEN}【从属节点 (Agent Node)】${COLOR_RESET}"
+    else
+        echo -e " 💡 ${COLOR_GREEN}智能推断: 本机主机环境 (公网 IP: ${LOCAL_IP:-检测中})${COLOR_RESET}"
+        echo -e "    推荐安装角色: ${COLOR_BOLD}${COLOR_GREEN}【主节点 (Master Hub)】${COLOR_RESET}"
     fi
     echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
 
@@ -494,6 +655,12 @@ while [[ $# -gt 0 ]]; do
             TOKEN="$2"
             ROLE="agent"
             shift 2 ;;
+        --domain|-d)
+            DOMAIN="$2"
+            shift 2 ;;
+        --nginx)
+            SETUP_NGINX=1
+            shift ;;
         --server|-s)
             SERVER="$2"
             shift 2 ;;
@@ -526,13 +693,17 @@ while [[ $# -gt 0 ]]; do
             echo "  --token, -t <TOKEN>   指定从节点接入凭证并自动纳管"
             echo "  --uninstall, -u       卸载清理本机 Work-V 服务"
             echo ""
-            echo "自适应调优选项:"
-            echo "  --server, -s <URL>    指定主控端地址 (默认: https://qweqwe.shangxinci.com)"
-            echo "  --port, -p <PORT>     指定 NAT 端口映射机的自定义外网端口"
+            echo "域名与网络选项:"
+            echo "  --domain, -d <DOMAIN> 指定主控外网访问域名 (可选，留空则使用纯 IP 访问)"
+            echo "  --nginx               自动配置 Nginx 反向代理与 WebSocket 转发"
+            echo "  --server, -s <URL>    指定主控端地址 (从节点安装时使用)"
+            echo "  --port, -p <PORT>     指定监听端口或 NAT 映射外网端口 (默认: 8080)"
+            echo "  --entry <PATH>        指定主控安全入口路径 (默认: /safe_entry)"
+            echo ""
+            echo "性能与加速选项:"
             echo "  --mirror, --cn        强制使用国内 CDN 镜像加速下载"
             echo "  --no-swap             禁用低内存 VPS 自动 Swap 挂载"
             echo "  --no-bbr              禁用 TCP BBR 极速拥塞控制算法"
-            echo "  --entry <PATH>        指定主控安全入口路径 (默认: /safe_entry)"
             echo "  --help, -h            显示本帮助信息"
             exit 0
             ;;

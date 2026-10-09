@@ -174,11 +174,51 @@ add_new_node() {
 
 test_nginx() {
     echo -e "${COLOR_YELLOW}检查 Nginx 配置与反代连通性...${COLOR_RESET}"
-    nginx -t
-    echo -e "${COLOR_YELLOW}测试本地与公网响应状态码...${COLOR_RESET}"
+    if command -v nginx &>/dev/null; then
+        nginx -t || true
+    fi
+    echo -e "${COLOR_YELLOW}测试本地响应状态码...${COLOR_RESET}"
     curl -s -o /dev/null -w "• 本地 127.0.0.1:8080: %{http_code}\n" http://127.0.0.1:8080/ || true
-    curl -s -o /dev/null -w "• 域名 https://qweqwe.shangxinci.com: %{http_code}\n" https://qweqwe.shangxinci.com/ || true
+    if [ -f "$BIN_FILE" ]; then
+        local cur_info
+        cur_info=$($BIN_FILE -entry -db "$DB_FILE" 2>/dev/null | grep -i "访问入口" | awk '{print $NF}' | head -n 1 || true)
+        if [ -n "$cur_info" ]; then
+            curl -s -o /dev/null -w "• 当前配置入口 $cur_info: %{http_code}\n" "$cur_info" || true
+        fi
+    fi
     echo -e "${COLOR_GREEN}✅ 测试完成！${COLOR_RESET}"
+}
+
+set_domain() {
+    local new_dom="$1"
+    if [ -z "$new_dom" ]; then
+        echo -e "${COLOR_CYAN}===== 配置/修改 Work-V 主控外网访问域名 =====${COLOR_RESET}"
+        read_input "请输入您的域名 (例如 vpn.example.com，输入 none 或留空则恢复纯 IP 访问): " new_dom ""
+    fi
+    if [ -f "$BIN_FILE" ]; then
+        if [ "$new_dom" = "none" ] || [ "$new_dom" = "clear" ] || [ -z "$new_dom" ]; then
+            $BIN_FILE -domain "none" -db "$DB_FILE"
+            if [ -f "/etc/systemd/system/${SERVICE_MASTER}.service" ]; then
+                sed -i "s| -domain [^ ]*||g" "/etc/systemd/system/${SERVICE_MASTER}.service" 2>/dev/null || true
+                systemctl daemon-reload 2>/dev/null || true
+            fi
+            systemctl restart "$SERVICE_MASTER" 2>/dev/null || true
+            echo -e "${COLOR_GREEN}✅ 已清除域名绑定，恢复为纯 IP 直连访问模式！${COLOR_RESET}"
+        else
+            new_dom=$(echo "$new_dom" | tr -d ' ' | sed -E 's|^https?://||; s|/$||')
+            $BIN_FILE -domain "$new_dom" -db "$DB_FILE"
+            if [ -f "/etc/systemd/system/${SERVICE_MASTER}.service" ]; then
+                sed -i "s| -domain [^ ]*||g" "/etc/systemd/system/${SERVICE_MASTER}.service" 2>/dev/null || true
+                sed -i "s|work-v.db|work-v.db -domain $new_dom|g" "/etc/systemd/system/${SERVICE_MASTER}.service" 2>/dev/null || true
+                systemctl daemon-reload 2>/dev/null || true
+            fi
+            systemctl restart "$SERVICE_MASTER" 2>/dev/null || true
+            echo -e "${COLOR_GREEN}✅ 域名配置已保存并已重启主控服务！${COLOR_RESET}"
+        fi
+        $BIN_FILE -entry -db "$DB_FILE"
+    else
+        echo -e "${COLOR_RED}❌ 主控端二进制不存在${COLOR_RESET}"
+    fi
 }
 
 drop_caches() {
@@ -301,11 +341,12 @@ show_menu() {
     echo -e "                                           (15) 检查并在线升级 sing-box 内核"
     echo -e "                                           (16) 一键生成系统综合诊断报告"
     echo -e "                                           (17) 卸载清理 Work-V 服务"
+    echo -e "                                           (18) 配置/绑定主控外网访问域名"
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
     echo -e "  (0)  退出管理"
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
 
-    read_input "请输入操作编号 [0-17]: " choice ""
+    read_input "请输入操作编号 [0-18]: " choice ""
     case "$choice" in
         1) restart_service ;;
         2) stop_service ;;
@@ -324,8 +365,9 @@ show_menu() {
         15) update_singbox_core ;;
         16) run_diagnostics ;;
         17) uninstall_confirm ;;
+        18) set_domain ;;
         0) exit 0 ;;
-        *) echo -e "${COLOR_RED}无效选项，请输入 0-17${COLOR_RESET}" ;;
+        *) echo -e "${COLOR_RED}无效选项，请输入 0-18${COLOR_RESET}" ;;
     esac
 }
 
@@ -341,6 +383,7 @@ case "$1" in
     reset-admin) reset_password_default ;;
     set-entry) set_safe_entry "$2" ;;
     disable-entry) disable_safe_entry ;;
+    domain|set-domain) set_domain "$2" ;;
     nodes) list_all_nodes ;;
     add-node) add_new_node "$2" ;;
     test|nginx) test_nginx ;;

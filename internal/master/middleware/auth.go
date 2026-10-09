@@ -2,25 +2,57 @@ package middleware
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"work-v/internal/master/model"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 var (
-	jwtSecretKey = []byte("work-v-super-secret-key-change-in-prod-2026")
+	jwtSecretMu  sync.RWMutex
+	jwtSecretKey []byte
 	tokenIssuer  = "work-v-master"
 )
 
 // SetJWTSecret 设置自定义 JWT 密钥
 func SetJWTSecret(secret string) {
 	if secret != "" {
+		jwtSecretMu.Lock()
 		jwtSecretKey = []byte(secret)
+		jwtSecretMu.Unlock()
 	}
+}
+
+func getJWTSecretKey() []byte {
+	jwtSecretMu.RLock()
+	if len(jwtSecretKey) > 0 {
+		k := jwtSecretKey
+		jwtSecretMu.RUnlock()
+		return k
+	}
+	jwtSecretMu.RUnlock()
+
+	if envSecret := os.Getenv("WORKV_JWT_SECRET"); envSecret != "" {
+		SetJWTSecret(envSecret)
+		return []byte(envSecret)
+	}
+
+	dbSecret := model.GetSetting("jwt_secret", "")
+	if dbSecret != "" {
+		SetJWTSecret(dbSecret)
+		return []byte(dbSecret)
+	}
+
+	fallback := "workv_dynamic_" + fmt.Sprintf("%d", time.Now().UnixNano())
+	SetJWTSecret(fallback)
+	return []byte(fallback)
 }
 
 // Claims 自定义 JWT 声明
@@ -44,7 +76,7 @@ func GenerateToken(adminID uint, username string, expireDuration time.Duration) 
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecretKey)
+	return token.SignedString(getJWTSecretKey())
 }
 
 // ParseToken 解析并校验 JWT
@@ -53,7 +85,7 @@ func ParseToken(tokenStr string) (*Claims, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
 		}
-		return jwtSecretKey, nil
+		return getJWTSecretKey(), nil
 	})
 	if err != nil {
 		return nil, err

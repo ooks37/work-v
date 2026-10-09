@@ -5,6 +5,7 @@
 set -e
 
 PORT=${1:-8080}
+DOMAIN=${2:-""}
 INSTALL_DIR="/opt/work-v-master"
 
 echo "🚀 [Work-V] 开始安装 Master 主控服务..."
@@ -19,11 +20,25 @@ esac
 
 echo "📦 准备主控二进制文件..."
 if [ -f "./work-v-master" ]; then
-  cp ./work-v-master "$INSTALL_DIR/"
+  cp -f ./work-v-master "$INSTALL_DIR/"
+elif [ -f "./work-v-master-linux" ]; then
+  cp -f ./work-v-master-linux "$INSTALL_DIR/work-v-master"
 else
-  echo "正在拉取或编译当前平台的 work-v-master..."
+  echo "正在拉取当前平台的 work-v-master..."
+  curl -fsSL "https://github.com/ooks37/work-v/releases/latest/download/work-v-master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master" 2>/dev/null || true
 fi
-chmod +x "$INSTALL_DIR/work-v-master" 2>/dev/null || true
+
+if [ ! -f "$INSTALL_DIR/work-v-master" ]; then
+  echo "❌ 无法获取 work-v-master 二进制文件，请确认网络连接"
+  exit 1
+fi
+chmod +x "$INSTALL_DIR/work-v-master"
+
+EXEC_CMD="$INSTALL_DIR/work-v-master -port $PORT -db $INSTALL_DIR/data/work-v.db"
+if [ -n "$DOMAIN" ]; then
+  DOMAIN=$(echo "$DOMAIN" | tr -d ' ' | sed -E 's|^https?://||; s|/$||')
+  EXEC_CMD="$EXEC_CMD -domain $DOMAIN"
+fi
 
 # 安装 systemd 服务
 cat > /etc/systemd/system/work-v-master.service <<EOF
@@ -35,7 +50,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/work-v-master -port $PORT -db $INSTALL_DIR/data/work-v.db
+ExecStart=$EXEC_CMD
 Restart=always
 RestartSec=5
 LimitNOFILE=65535
@@ -50,7 +65,10 @@ systemctl restart work-v-master
 
 echo "=================================================="
 echo "✅ Work-V 主控已成功安装并启动！"
-echo "  Web 控制台访问: http://<你的服务器IP>:$PORT"
+if [ -n "$DOMAIN" ]; then
+  echo "  域名访问: http://$DOMAIN (反代配置后推荐使用 https://$DOMAIN)"
+fi
+echo "  Web 控制台直接访问: http://<你的服务器IP>:$PORT"
 echo "  默认管理员账号: admin"
 echo "  默认管理员密码: admin123456"
 echo "=================================================="
