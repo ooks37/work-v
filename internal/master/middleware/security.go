@@ -17,8 +17,8 @@ func SecurityHeaders() gin.HandlerFunc {
 		c.Header("X-XSS-Protection", "1; mode=block")
 		// 严控 Referrer 泄露
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
-		// 内容安全策略 (开发与生产兼容)
-		c.Header("Content-Security-Policy", "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:;")
+		// 允许全域资源加载 (避免浏览器因严苛 CSP 策略拦截 Vue CDN 导致白屏)
+		c.Header("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; font-src * data:; img-src * data: blob:; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval';")
 
 		c.Next()
 	}

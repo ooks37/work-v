@@ -28,10 +28,13 @@
       }
     }
   </script>
-  <!-- Vue 3 CDN -->
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <!-- Lucide Icons CDN -->
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Vue 3 本地直接加载 (内嵌无外网依赖，告别白屏) -->
+  <script src="/vue.global.prod.js"></script>
+  <script>
+    if (!window.Vue) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"><\/script>');
+    }
+  </script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
     body {
@@ -55,7 +58,7 @@
     .pulse-glow {
       box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
     }
-    [v-cloak] { display: none; }
+    [v-cloak] { opacity: 0; transition: opacity 0.2s; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen selection:bg-emerald-500 selection:text-white transition-colors duration-200">

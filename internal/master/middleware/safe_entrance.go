@@ -52,12 +52,15 @@ func GetSafePath() (bool, string) {
 	return GlobalSafeEntrance.Enabled, GlobalSafeEntrance.SafePath
 }
 
-// HandleSafeEntryVisit 当访问配置的安全入口时，种入专属凭据并跳转到根页面
+// HandleSafeEntryVisit 当访问配置的安全入口时，种入专属凭据并跳转到控制台
 func HandleSafeEntryVisit(c *gin.Context) {
+	isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
 	// 设置 Cookie，有效期 30 天
-	c.SetCookie(SafeCookieName, SafeCookieVal, 30*24*3600, "/", "", false, true)
-	// 302 重定向到控制台主入口
-	c.Redirect(http.StatusFound, "/")
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(SafeCookieName, SafeCookieVal, 30*24*3600, "/", "", isHTTPS, false)
+	c.SetCookie("workv_entry_ok", "1", 30*24*3600, "/", "", isHTTPS, false)
+	// 302 重定向到控制台主入口 (带上安全放行标记，防止部分浏览器重定向首包丢 Cookie)
+	c.Redirect(http.StatusFound, "/?entry=verified")
 }
 
 // BaotaSafeEntranceHTML 类似宝塔面板安全入口拦截提示页面
@@ -222,28 +225,49 @@ func SafeEntranceFilter() gin.HandlerFunc {
 			return
 		}
 
-		// 2. 白名单免检路径：订阅链接、Agent WS 长连、安装脚本、二进制下载
+		// 2. 静态资源（js/css/图片/字体/ico）无论何时直接放行！绝不可拦截返回 HTML，否则会导致 JS 语法错误与白屏！
+		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") || strings.HasSuffix(path, ".png") ||
+			strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".svg") || strings.HasSuffix(path, ".ico") ||
+			strings.HasSuffix(path, ".woff") || strings.HasSuffix(path, ".woff2") || strings.HasSuffix(path, ".ttf") {
+			c.Next()
+			return
+		}
+
+		// 3. 白名单免检路径：订阅链接、Agent WS 长连、安装脚本、二进制下载
 		if strings.HasPrefix(path, "/sub/") || strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/download/") || path == "/install.sh" {
 			c.Next()
 			return
 		}
 
-		// 3. 检查是否持有授权 Cookie
+		// 4. 允许通过 URL 放行标记进入 (重定向或直接带参访问)
+		if c.Query("entry") == "verified" {
+			isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+			c.SetSameSite(http.SameSiteLaxMode)
+			c.SetCookie(SafeCookieName, SafeCookieVal, 30*24*3600, "/", "", isHTTPS, false)
+			c.SetCookie("workv_entry_ok", "1", 30*24*3600, "/", "", isHTTPS, false)
+			c.Next()
+			return
+		}
+
+		// 5. 检查是否持有授权 Cookie
 		cookieVal, err := c.Cookie(SafeCookieName)
 		if err == nil && cookieVal == SafeCookieVal {
 			c.Next()
 			return
 		}
 
-		// 4. 允许通过 URL 参数紧急带入密钥访问 (例如 ?safe_key=safe_entry)
+		// 6. 允许通过 URL 参数紧急带入密钥访问 (例如 ?safe_key=safe_entry)
 		keyParam := c.Query("safe_key")
 		if keyParam != "" && "/"+strings.TrimPrefix(keyParam, "/") == safePath {
-			c.SetCookie(SafeCookieName, SafeCookieVal, 30*24*3600, "/", "", false, true)
+			isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+			c.SetSameSite(http.SameSiteLaxMode)
+			c.SetCookie(SafeCookieName, SafeCookieVal, 30*24*3600, "/", "", isHTTPS, false)
+			c.SetCookie("workv_entry_ok", "1", 30*24*3600, "/", "", isHTTPS, false)
 			c.Next()
 			return
 		}
 
-		// 5. 未授权访问拦截：API 返回 403 JSON，浏览器返回类似宝塔安全入口提示页
+		// 7. 未授权访问拦截：API 返回 403 JSON，浏览器展示类似宝塔安全入口提示页
 		if strings.HasPrefix(path, "/api/") {
 			c.JSON(http.StatusForbidden, gin.H{"error": "安全入口拦截：请先通过正确的安全入口访问"})
 			c.Abort()
