@@ -43,8 +43,17 @@ func detectLocalIP() string {
 	return "127.0.0.1"
 }
 
+// listenAddr 组装监听地址: bind 为空 => ":port" (所有网卡); 否则 "bind:port"
+func listenAddr(bind string, port int) string {
+	if bind == "" {
+		return fmt.Sprintf(":%d", port)
+	}
+	return fmt.Sprintf("%s:%d", bind, port)
+}
+
 func main() {
 	port := flag.Int("port", 8080, "Web 服务监听端口")
+	bindAddr := flag.String("bind", "", "监听地址: 留空=所有网卡; 设为 127.0.0.1 则只允许本机/反向代理访问 (推荐配合 HTTPS 反代)")
 	dbPath := flag.String("db", "data/work-v.db", "SQLite 数据库路径")
 	jwtSecret := flag.String("jwt-secret", "", "自定义 JWT 密钥")
 	domainFlag := flag.String("domain", "", "配置主控外网访问域名 (例如 vpn.example.com，传空则为纯 IP 模式)")
@@ -291,8 +300,13 @@ func main() {
 	// 初始化路由与启动 HTTP
 	r := master.SetupRouter(httpFS)
 
-	addr := fmt.Sprintf(":%d", *port)
+	// -bind 为空时保持 ":端口" (所有网卡), 指定 127.0.0.1 则只接受本机/反向代理的连接,
+	// 避免公网明文直连绕过 HTTPS 反代 (安全入口凭证与 JWT 会以明文传输)。
+	addr := listenAddr(*bindAddr, *port)
 	log.Printf("[Work-V] 服务启动监听: %s (Web 控制台 & Agent 连接点)", addr)
+	if *bindAddr != "" && *bindAddr != "127.0.0.1" && *bindAddr != "::1" {
+		log.Printf("[Work-V] 提示: 当前监听 %s, 若前面有 TLS 反向代理建议改为 -bind 127.0.0.1", *bindAddr)
+	}
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("服务启动失败: %v", err)
 	}

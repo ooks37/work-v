@@ -1,5 +1,20 @@
 # 更新日志
 
+## v2.1.2 — 部署安全加固
+
+1. **新增 `-bind` 监听地址参数** — `cmd/master/main.go`
+   默认行为不变（留空 = 监听所有网卡）。前面挂了 HTTPS 反向代理时建议：
+   `work-v-master -port 8088 -bind 127.0.0.1 -db ...`，
+   这样面板只能经反向代理（域名 + TLS）访问，避免公网明文直连端口绕过 TLS，
+   防止安全入口凭证与登录 JWT 以明文传输。启动日志会在监听非回环地址时给出提示。
+
+2. **修复 `work-v` CLI 回显的入口端口错误** — `scripts/work-v`
+   历史实现硬编码 `8080` 与 `/opt/work-v-master`，因此在自定义端口（如 8088）或自定义安装目录
+   （如 `/www/wwwroot/work-v`）的部署下会打印错误的入口地址，甚至误报"未安装"。
+   现在 CLI 会从 `/etc/systemd/system/work-v-master.service` 的 ExecStart 反推真实的
+   二进制路径、`-port` 与 `-db`，所有子命令统一走 `run_master`，回显地址与实际部署一致；
+   `work-v test` 的本地探测端口也改为实际端口。
+
 ## v2.1.1 — 安全入口 (safe path) 专项修复
 
 > 由用户反馈后复现确认: 安全入口存在可绕过缺陷。
