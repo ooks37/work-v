@@ -516,6 +516,26 @@ while [[ $# -gt 0 ]]; do
         --uninstall|-u)
             ROLE="uninstall"
             shift ;;
+        --help|-h)
+            echo "Work-V 全环境自适应安装引擎 (v2.0)"
+            echo "用法: curl -fsSL <URL>/install.sh | bash -s -- [选项]"
+            echo ""
+            echo "模式选项:"
+            echo "  --master, -m          自动部署为 主控端 (Master Hub)"
+            echo "  --agent, -a           自动部署为 从属节点 (Agent Node)"
+            echo "  --token, -t <TOKEN>   指定从节点接入凭证并自动纳管"
+            echo "  --uninstall, -u       卸载清理本机 Work-V 服务"
+            echo ""
+            echo "自适应调优选项:"
+            echo "  --server, -s <URL>    指定主控端地址 (默认: https://qweqwe.shangxinci.com)"
+            echo "  --port, -p <PORT>     指定 NAT 端口映射机的自定义外网端口"
+            echo "  --mirror, --cn        强制使用国内 CDN 镜像加速下载"
+            echo "  --no-swap             禁用低内存 VPS 自动 Swap 挂载"
+            echo "  --no-bbr              禁用 TCP BBR 极速拥塞控制算法"
+            echo "  --entry <PATH>        指定主控安全入口路径 (默认: /safe_entry)"
+            echo "  --help, -h            显示本帮助信息"
+            exit 0
+            ;;
         *)
             shift ;;
     esac
