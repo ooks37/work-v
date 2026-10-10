@@ -41,8 +41,8 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 	})
 
 	// 2. 外部多端自适应订阅接口 (支持凭证校验与网页端密码解锁)
-	r.Match([]string{"GET", "POST"}, "/sub/:token", sub.HandleSubscription)
-	r.Match([]string{"GET", "POST"}, "/sub", sub.HandleSubscription)
+	r.Match([]string{"GET", "POST", "HEAD"}, "/sub/:token", sub.HandleSubscription)
+	r.Match([]string{"GET", "POST", "HEAD"}, "/sub", sub.HandleSubscription)
 
 	// 3. 节点一键智能安装脚本动态分发 (支持 GET 与 HEAD 状态探测)
 	r.Match([]string{"GET", "HEAD"}, "/install.sh", handleAgentInstallScript)
