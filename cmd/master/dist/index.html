@@ -835,17 +835,40 @@
               </div>
             </div>
 
-            <!-- VLESS Reality 专属参数 -->
+            <!-- VLESS Reality / gRPC Reality 专属参数 -->
             <div v-if="inb.type === 'vless' || inb.type === 'grpc-reality'" class="space-y-2 pt-2 border-t border-black/[0.06]">
               <div class="flex items-center justify-between">
                 <span class="text-[11px] text-[#86868b] font-medium">Reality 伪装与密钥配置</span>
-                <button type="button" @click="regenerateRealityKeys(inb)" class="text-[11px] text-[#0071e3] hover:underline">🎲 重新生成公私钥对</button>
+                <div class="flex items-center gap-2">
+                  <select @change="(e) => { if(e.target.value) inb.options.server_name = e.target.value; }" class="text-[11px] text-[#0071e3] bg-white rounded-lg border border-black/10 px-2 py-0.5 outline-none cursor-pointer">
+                    <option value="">⚡ 233boy 推荐伪装站点...</option>
+                    <option v-for="item in recommendedSniList" :key="item.domain" :value="item.domain">
+                      {{ item.domain }} ({{ item.desc }})
+                    </option>
+                  </select>
+                  <button type="button" @click="regenerateRealityKeys(inb)" class="text-[11px] text-[#0071e3] hover:underline">🎲 换密钥</button>
+                </div>
               </div>
               <div class="grid grid-cols-2 gap-2">
                 <input v-model="inb.options.server_name" placeholder="SNI 域名 (如: gateway.icloud.com)" class="px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
                 <input v-model="inb.options.short_id" placeholder="Short ID (如: 0123456789abcdef)" class="px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
               </div>
               <input v-model="inb.options.public_key" placeholder="Reality 公钥 Public Key" class="w-full px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
+            </div>
+
+            <!-- WebSocket (VLESS-WS / VMess-WS) 专属参数 (233boy 经典) -->
+            <div v-if="inb.type === 'vless-ws' || inb.type === 'vmess-ws' || inb.type === 'vmess'" class="space-y-2 pt-2 border-t border-black/[0.06]">
+              <div class="text-[11px] text-[#86868b] font-medium">WebSocket + TLS / CDN 传输设置 (233boy 经典)</div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-[10px] text-[#86868b] mb-0.5">WS 路径 (Path)</label>
+                  <input v-model="inb.options.path" placeholder="/ws 或 /vmess" class="w-full px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
+                </div>
+                <div>
+                  <label class="block text-[10px] text-[#86868b] mb-0.5">TLS SNI 域名 (可选)</label>
+                  <input v-model="inb.options.server_name" placeholder="留空使用节点连接地址" class="w-full px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
+                </div>
+              </div>
             </div>
 
             <!-- Hysteria 2 / TUIC / Shadowsocks 专属参数 -->
@@ -1259,13 +1282,26 @@
         // 协议元数据
         const allProtocols = [
           { key: 'vless', name: 'VLESS Reality', icon: '🌟' },
-          { key: 'hysteria2', name: 'Hysteria 2', icon: '⚡' },
-          { key: 'tuic', name: 'TUIC v5', icon: '🚀' },
+          { key: 'vless-ws', name: 'VLESS-WS (防封)', icon: '☁️' },
+          { key: 'vmess-ws', name: 'VMess-WS (经典)', icon: '⚡' },
           { key: 'grpc', name: 'gRPC Reality', icon: '🛡️' },
+          { key: 'hysteria2', name: 'Hysteria 2', icon: '🚀' },
+          { key: 'tuic', name: 'TUIC v5', icon: '🛸' },
           { key: 'shadowsocks', name: 'Shadowsocks', icon: '🔒' },
           { key: 'trojan', name: 'Trojan', icon: '🌐' },
-          { key: 'anytls', name: 'AnyTLS', icon: '🎯' },
-          { key: 'vless-ws', name: 'VLESS-WS', icon: '☁️' }
+          { key: 'anytls', name: 'AnyTLS', icon: '🎯' }
+        ];
+
+        // 233boy 优质推荐伪装域名库 (实测抗封优质 TLS 1.3 站点)
+        const recommendedSniList = [
+          { domain: 'gateway.icloud.com', desc: '苹果 iCloud (低特征·最推荐)' },
+          { domain: 'itunes.apple.com', desc: '苹果 iTunes 音乐商店' },
+          { domain: 'www.microsoft.com', desc: '微软官网 (TLS 1.3 极速)' },
+          { domain: 'learn.microsoft.com', desc: '微软开发文档' },
+          { domain: 'aws.amazon.com', desc: '亚马逊 AWS 云平台' },
+          { domain: 'www.yahoo.com', desc: '雅虎国际门户' },
+          { domain: 'www.cloudflare.com', desc: 'Cloudflare 国际官网' },
+          { domain: 'www.speedtest.net', desc: 'Speedtest 国际测速' }
         ];
 
         // 专属安全入口 (自动推断当前路径消除闪烁)
@@ -1656,7 +1692,7 @@
 
         const addNewInbound = (protoKey) => {
           if (!inboundsModal.list) inboundsModal.list = [];
-          const portMap = { 'vless': 2083, 'hysteria2': 8443, 'tuic': 8444, 'grpc': 2053, 'shadowsocks': 8388, 'trojan': 443, 'anytls': 8445, 'vless-ws': 8447 };
+          const portMap = { 'vless': 2083, 'hysteria2': 8443, 'tuic': 8444, 'grpc': 2053, 'shadowsocks': 8388, 'trojan': 443, 'anytls': 8445, 'vless-ws': 2096, 'vmess-ws': 2095 };
           const port = portMap[protoKey] || (8000 + inboundsModal.list.length);
           let newInb = {
             node_id: inboundsModal.node?.id || 0,
@@ -1666,7 +1702,8 @@
             enabled: true,
             options: {
               server_name: 'gateway.icloud.com',
-              service_name: protoKey === 'grpc' ? 'grpc-service' : undefined
+              service_name: protoKey === 'grpc' ? 'grpc-service' : undefined,
+              path: protoKey === 'vmess-ws' ? '/vmess' : (protoKey === 'vless-ws' ? '/ws' : undefined)
             }
           };
           if (protoKey === 'vless' || protoKey === 'grpc') {
@@ -1975,7 +2012,7 @@
           isLoggedIn, currentTab, isRefreshing, toasts, addToast,
           loginForm, loginLoading, loginShake, showLoginPassword, lockRemaining, handleLogin, logout,
           dashboard, nodes, users, filteredUsers, userSearchQuery,
-          allProtocols, getNodeProtocols, getAppleProtocolBadgeClass,
+          allProtocols, recommendedSniList, getNodeProtocols, getAppleProtocolBadgeClass,
           safeEntrance, safePathInput, showSafeModal, openSafeModal, generateRandomSafePath, saveSafeEntrance,
           showAddNodeModal, openAddNodeModal, nodeForm, createNode, toggleNodeHidden, pingNode, nodeLatency,
           quickCopyCommand, getAdaptedInstallCommand, selectedNodeForInstall, deleteNode, restartNodeSingbox,

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"work-v/internal/master"
+	"work-v/internal/master/api"
 	"work-v/internal/master/hub"
 	"work-v/internal/master/middleware"
 	"work-v/internal/master/model"
@@ -69,6 +70,7 @@ func main() {
 	setPass := flag.String("set-password", "", "修改管理员密码为指定值")
 	listNodes := flag.Bool("nodes", false, "查看所有受控节点列表与状态")
 	addNode := flag.String("add-node", "", "添加新节点并生成一键纳管命令 (参数为节点名称)")
+	showUrls := flag.Bool("url", false, "查看所有节点与协议的直连链接与订阅 (类似 233boy v2ray url)")
 	flag.Parse()
 
 	// 1. 初始化数据库
@@ -268,6 +270,40 @@ func main() {
 		fmt.Println("• 在目标副节点服务器终端直接执行以下一键纳管指令即可自动接入：")
 		fmt.Println("--------------------------------------------------------------------------------")
 		fmt.Printf("curl -fsSL %s/install.sh | bash -s -- --token %s\n", baseURL, token)
+		fmt.Println("================================================================================")
+		os.Exit(0)
+	}
+
+	// 7. 处理客户端节点直连链接与订阅全景 (类似 233boy v2ray url)
+	if *showUrls {
+		var nodes []model.Node
+		model.DB.Find(&nodes)
+		var user model.User
+		if err := model.DB.First(&user).Error; err != nil {
+			user = model.User{
+				Username: "default_user",
+				UUID:     uuid.New().String(),
+				SubToken: "token_" + api.RandomToken(8),
+			}
+		}
+		baseURL := getBaseURL()
+		fmt.Println("================================================================================")
+		fmt.Println("         Work-V 客户端节点直连链接与订阅全景 (233boy 极速模式)          ")
+		fmt.Println("================================================================================")
+		if len(nodes) == 0 {
+			fmt.Println("当前暂未添加任何节点。请先执行: work-v add-node <节点名称> 或在面板添加节点。")
+		} else {
+			for _, n := range nodes {
+				fmt.Printf("【节点 #%d: %s】(地址: %s, 状态: %s)\n", n.ID, n.Name, n.Address, n.Status)
+				links := service.GenerateNodeShareLinks(&n, user.UUID, user.Username)
+				for _, l := range links {
+					fmt.Printf("  • %-18s [%s:%d]\n", l.Name, l.PortType, l.Port)
+					fmt.Printf("    %s\n", l.Link)
+				}
+				fmt.Println("--------------------------------------------------------------------------------")
+			}
+		}
+		fmt.Printf("【通用自适应聚合订阅链接】\n%s/sub/%s\n", baseURL, user.SubToken)
 		fmt.Println("================================================================================")
 		os.Exit(0)
 	}

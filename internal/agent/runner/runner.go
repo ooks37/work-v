@@ -850,6 +850,44 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 			}
 			inbounds = append(inbounds, inbound)
 
+		case "vmess-ws", "vmess":
+			users := make([]map[string]any, 0)
+			for _, u := range payload.Users {
+				if u.Status == "active" {
+					users = append(users, map[string]any{
+						"name":     u.Username,
+						"uuid":     u.UUID,
+						"alter_id": 0,
+					})
+				}
+			}
+			wsPath, _ := in.Options["path"].(string)
+			if wsPath == "" {
+				wsPath = "/vmess"
+			}
+			serverName, _ := in.Options["server_name"].(string)
+			tlsOpt := map[string]any{
+				"enabled":          true,
+				"certificate_path": certPath,
+				"key_path":         keyPath,
+			}
+			if serverName != "" {
+				tlsOpt["server_name"] = serverName
+			}
+			inbound := map[string]any{
+				"type":        "vmess",
+				"tag":         in.Tag,
+				"listen":      "::",
+				"listen_port": in.ListenPort,
+				"users":       users,
+				"transport": map[string]any{
+					"type": "ws",
+					"path": wsPath,
+				},
+				"tls": tlsOpt,
+			}
+			inbounds = append(inbounds, inbound)
+
 		case "trojan":
 			users := make([]map[string]any, 0)
 			for _, u := range payload.Users {

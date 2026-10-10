@@ -8,6 +8,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,6 +88,8 @@ func protoMatches(in common.InboundConfig, filter string) bool {
 		return isGRPC
 	case "ws", "vless-ws":
 		return isWS
+	case "vmess", "vmess-ws":
+		return inType == "vmess-ws" || inType == "vmess"
 	case "vless":
 		return inType == "vless"
 	case "hy2", "hysteria2", "hysteria":
@@ -224,6 +227,32 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				link := fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=tls&sni=%s&type=ws&path=%s&allowInsecure=1#%s",
 					user.UUID, nodeAddr, in.ListenPort, serverName, url.QueryEscape(wsPath), url.QueryEscape(fmt.Sprintf("%s-VLESS-WS", n.Name)))
 				links = append(links, link)
+
+			case in.Type == "vmess-ws" || in.Type == "vmess":
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = nodeAddr
+				}
+				wsPath, _ := in.Options["path"].(string)
+				if wsPath == "" {
+					wsPath = "/vmess"
+				}
+				vmessMeta := map[string]string{
+					"v":    "2",
+					"ps":   fmt.Sprintf("%s-VMess-WS", n.Name),
+					"add":  nodeAddr,
+					"port": strconv.Itoa(in.ListenPort),
+					"id":   user.UUID,
+					"aid":  "0",
+					"net":  "ws",
+					"type": "none",
+					"host": serverName,
+					"path": wsPath,
+					"tls":  "tls",
+					"sni":  serverName,
+				}
+				metaJSON, _ := json.Marshal(vmessMeta)
+				links = append(links, "vmess://"+base64.StdEncoding.EncodeToString(metaJSON))
 
 			case in.Type == "vless":
 				pubKey, _ := in.Options["public_key"].(string)
@@ -381,6 +410,37 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 					"server":           nodeAddr,
 					"port":             in.ListenPort,
 					"uuid":             user.UUID,
+					"network":          "ws",
+					"tls":              true,
+					"udp":              true,
+					"servername":       serverName,
+					"skip-cert-verify": true,
+					"ws-opts": map[string]any{
+						"path": wsPath,
+					},
+				}
+				proxies = append(proxies, p)
+				proxyNames = append(proxyNames, name)
+
+			case in.Type == "vmess-ws" || in.Type == "vmess":
+				name := uniqueName(usedNames, fmt.Sprintf("%s-VMess-WS", n.Name))
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = nodeAddr
+				}
+				wsPath, _ := in.Options["path"].(string)
+				if wsPath == "" {
+					wsPath = "/vmess"
+				}
+
+				p := map[string]any{
+					"name":             name,
+					"type":             "vmess",
+					"server":           nodeAddr,
+					"port":             in.ListenPort,
+					"uuid":             user.UUID,
+					"alterId":          0,
+					"cipher":           "auto",
 					"network":          "ws",
 					"tls":              true,
 					"udp":              true,
@@ -646,6 +706,37 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					"server":      nodeAddr,
 					"server_port": in.ListenPort,
 					"uuid":        user.UUID,
+					"transport": map[string]any{
+						"type": "ws",
+						"path": wsPath,
+					},
+					"tls": map[string]any{
+						"enabled":     true,
+						"server_name": serverName,
+						"insecure":    true,
+					},
+				}
+				outbounds = append(outbounds, out)
+				outTags = append(outTags, tag)
+
+			} else if in.Type == "vmess" || in.Type == "vmess-ws" {
+				tag := fmt.Sprintf("%s-VMess-WS", n.Name)
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = nodeAddr
+				}
+				wsPath, _ := in.Options["path"].(string)
+				if wsPath == "" {
+					wsPath = "/vmess"
+				}
+				out := map[string]any{
+					"type":        "vmess",
+					"tag":         tag,
+					"server":      nodeAddr,
+					"server_port": in.ListenPort,
+					"uuid":        user.UUID,
+					"security":    "auto",
+					"alter_id":    0,
 					"transport": map[string]any{
 						"type": "ws",
 						"path": wsPath,

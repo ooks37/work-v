@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -164,6 +165,16 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 			},
 		},
 		{
+			Type:       "vmess-ws",
+			Tag:        "vmess-ws-in",
+			ListenPort: 2095,
+			Enabled:    protoMap["vmess-ws"] || protoMap["vmess"],
+			Options: map[string]any{
+				"server_name": "gateway.icloud.com",
+				"path":        "/vmess",
+			},
+		},
+		{
 			Type:       "trojan",
 			Tag:        "trojan-in",
 			ListenPort: 8446,
@@ -275,6 +286,40 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 				PortType:    "TCP",
 				Link:        link,
 				Description: "基于 WebSocket + TLS 的传输协议，兼容 CDN 节点代理与反代加速",
+			})
+
+		case in.Type == "vmess-ws" || in.Type == "vmess":
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = node.Address
+			}
+			wsPath, _ := in.Options["path"].(string)
+			if wsPath == "" {
+				wsPath = "/vmess"
+			}
+			vmessMeta := map[string]string{
+				"v":    "2",
+				"ps":   fmt.Sprintf("%s-VMess-WS", node.Name),
+				"add":  node.Address,
+				"port": strconv.Itoa(in.ListenPort),
+				"id":   userUUID,
+				"aid":  "0",
+				"net":  "ws",
+				"type": "none",
+				"host": serverName,
+				"path": wsPath,
+				"tls":  "tls",
+				"sni":  serverName,
+			}
+			metaJSON, _ := json.Marshal(vmessMeta)
+			link := "vmess://" + base64.StdEncoding.EncodeToString(metaJSON)
+			links = append(links, ProtocolShareLink{
+				Protocol:    "vmess-ws",
+				Name:        fmt.Sprintf("%s (VMess WebSocket)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: "经典 VMess + WebSocket + TLS / CDN 传输协议 (233boy 经典兼容)",
 			})
 
 		case in.Type == "vless":

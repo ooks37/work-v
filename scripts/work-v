@@ -367,9 +367,76 @@ run_diagnostics() {
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
 }
 
+enable_bbr() {
+    echo -e "${COLOR_CYAN}===== 正在检测并配置系统 TCP BBR 极速拥塞控制 (233boy 标配优化) =====${COLOR_RESET}"
+    local current_cc
+    current_cc=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}' || true)
+    if [ "$current_cc" = "bbr" ]; then
+        echo -e "${COLOR_GREEN}✅ 当前系统已启用 TCP BBR 拥塞控制！(${current_cc})${COLOR_RESET}"
+        return 0
+    fi
+
+    echo -e "${COLOR_YELLOW}正在为当前系统激活 BBR + FQ 模块...${COLOR_RESET}"
+    modprobe tcp_bbr 2>/dev/null || true
+    if [ -d /etc/modules-load.d ]; then
+        echo "tcp_bbr" > /etc/modules-load.d/bbr.conf 2>/dev/null || true
+    fi
+
+    cat > /etc/sysctl.d/99-bbr.conf << 'EOF'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+    sysctl --system >/dev/null 2>&1 || sysctl -p /etc/sysctl.d/99-bbr.conf >/dev/null 2>&1 || true
+
+    local new_cc
+    new_cc=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}' || true)
+    if [ "$new_cc" = "bbr" ]; then
+        echo -e "${COLOR_GREEN}🎉 TCP BBR 拥塞控制已成功开启并固化为开机自启！${COLOR_RESET}"
+    else
+        echo -e "${COLOR_YELLOW}⚠️ 内核报告拥塞控制为: ${new_cc} (部分容器架构可能受宿主机限制)${COLOR_RESET}"
+    fi
+}
+
+show_urls() {
+    parse_unit "$UNIT_MASTER" >/dev/null 2>&1 || true
+    if [ -f "$BIN_FILE" ]; then
+        run_master -url
+    else
+        echo -e "${COLOR_RED}未找到 Master 主控服务，请先安装部署。${COLOR_RESET}"
+    fi
+}
+
+show_qr() {
+    echo -e "${COLOR_CYAN}===== Work-V 客户端直连与终端二维码 (233boy 模式) =====${COLOR_RESET}"
+    show_urls
+    if command -v qrencode &>/dev/null; then
+        echo -e "${COLOR_YELLOW}💡 提示: 您可以在终端直接通过 qrencode -t ANSIUTF8 <链接> 打印二维码${COLOR_RESET}"
+    else
+        echo -e "${COLOR_YELLOW}💡 提示: 执行 apt-get install -y qrencode 或登录 Web 控制台即可直接查看高清二维码。${COLOR_RESET}"
+    fi
+}
+
+get_public_ip() {
+    echo -e "${COLOR_CYAN}===== 正在获取服务器外网公网 IP =====${COLOR_RESET}"
+    local ip
+    ip=$(curl -s4 --connect-timeout 3 https://ip.sb 2>/dev/null || curl -s4 --connect-timeout 3 https://api.ipify.org 2>/dev/null || echo "无法获取")
+    echo -e "公网 IPv4: ${COLOR_GREEN}${ip}${COLOR_RESET}"
+}
+
+get_free_port() {
+    local port
+    while true; do
+        port=$((RANDOM % 50000 + 10000))
+        if ! ss -lntup 2>/dev/null | grep -q ":$port "; then
+            echo -e "推荐可用端口: ${COLOR_GREEN}${port}${COLOR_RESET}"
+            break
+        fi
+    done
+}
+
 show_menu() {
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
-    echo -e "       ${COLOR_GREEN}${COLOR_BOLD}Work-V 分布式网络与订阅中枢 · 终端运维管理平台 (v2.0.0)${COLOR_RESET}        "
+    echo -e "       ${COLOR_GREEN}${COLOR_BOLD}Work-V 分布式网络与订阅中枢 · 终端运维管理平台 (融合 233boy 模式)${COLOR_RESET}        "
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
     echo -e " 主控端 (Master): $(check_master_active)    从节点 (Agent): $(check_agent_active)"
     echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
@@ -379,7 +446,7 @@ show_menu() {
     echo -e "  (3)  启动 Work-V 服务                    (7)  一键关闭安全入口限制 (免密入口)"
     echo -e "  (4)  查看服务运行状态 & 内存占用          (8)  修改管理员密码"
     echo -e "${COLOR_CYAN}--------------------------------------------------------------------------------${COLOR_RESET}"
-    echo -e " 【分布式从属节点管理】                    【系统与环境维护】"
+    echo -e " 【分布式从属节点管理】                    【系统优化与 233boy 增强工具】"
     echo -e "  (9)  查看所有受控节点列表与在线状态       (12) 检查 Nginx 反代与 SSL 连通性"
     echo -e "  (10) 快速添加新副节点 (生成纳管命令)     (13) 释放系统内存与缓存清理"
     echo -e "  (11) 查看服务实时运行日志                (14) 查看系统开放端口与协议监听"
@@ -387,11 +454,15 @@ show_menu() {
     echo -e "                                           (16) 一键生成系统综合诊断报告"
     echo -e "                                           (17) 卸载清理 Work-V 服务"
     echo -e "                                           (18) 配置/绑定主控外网访问域名"
+    echo -e "                                           (19) 一键开启 TCP BBR 极速拥塞控制"
+    echo -e "                                           (20) 终端导出节点直连链接 (v2ray url)"
+    echo -e "                                           (21) 查询本机公网出口 IP"
+    echo -e "                                           (22) 随机获取系统空闲端口"
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
     echo -e "  (0)  退出管理"
     echo -e "${COLOR_CYAN}================================================================================${COLOR_RESET}"
 
-    read_input "请输入操作编号 [0-18]: " choice ""
+    read_input "请输入操作编号 [0-22]: " choice ""
     case "$choice" in
         1) restart_service ;;
         2) stop_service ;;
@@ -411,14 +482,23 @@ show_menu() {
         16) run_diagnostics ;;
         17) uninstall_confirm ;;
         18) set_domain ;;
+        19) enable_bbr ;;
+        20) show_urls ;;
+        21) get_public_ip ;;
+        22) get_free_port ;;
         0) exit 0 ;;
-        *) echo -e "${COLOR_RED}无效选项，请输入 0-18${COLOR_RESET}" ;;
+        *) echo -e "${COLOR_RED}无效选项，请输入 0-22${COLOR_RESET}" ;;
     esac
 }
 
-# 命令行非交互快捷参数支持
+# 命令行非交互快捷参数支持 (完全兼容 233boy 经典语法)
 case "$1" in
     default|entry|info) show_info ;;
+    url|urls|link|links) show_urls ;;
+    qr|qrcode) show_qr ;;
+    bbr) enable_bbr ;;
+    ip) get_public_ip ;;
+    get-port|free-port) get_free_port ;;
     restart) restart_service ;;
     stop) stop_service ;;
     start) start_service ;;
