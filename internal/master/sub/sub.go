@@ -2,9 +2,10 @@ package sub
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,25 +13,62 @@ import (
 
 	"work-v/internal/common"
 	"work-v/internal/master/model"
+	"work-v/internal/master/service"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
 
-// resolveNodeAddress 智能解析客户端可连接的节点地址 (优先节点显式配置，回退主控域名或当前 Host)
+// resolveNodeAddress 解析客户端可连接的节点地址 (只用节点自己的配置)。
+//
+// 安全: 历史实现会回落到 "主控域名" 甚至 "请求 Host"。后者意味着任何拿到订阅令牌的人
+// 只要伪造 Host 头, 就能让订阅里所有节点地址变成他自己控制的域名 (流量劫持/钓鱼),
+// 因此这里只认节点自身已落库的地址; 没地址的节点直接跳过 (agent 连上后会自动回填)。
 func resolveNodeAddress(n *model.Node, c *gin.Context) string {
 	addr := strings.TrimSpace(n.Address)
-	if addr != "" && addr != "自动探测" && addr != "127.0.0.1" {
-		return addr
+	if addr == "" || addr == "自动探测" || addr == "127.0.0.1" || addr == "localhost" {
+		return ""
 	}
-	if d := model.GetSetting("master_domain", ""); d != "" {
-		return d
+	return addr
+}
+
+// normalizeRealityKey 归一化 Reality 公钥。
+// 历史版本把公钥以 64 位 hex 存库, 而客户端需要的是 32 字节原始数据的 base64url 形式;
+// 直接下发 hex 会让客户端解出 48 字节公钥, 该节点对所有客户端都握手失败。
+func normalizeRealityKey(k string) string {
+	k = strings.TrimSpace(k)
+	if len(k) != 64 {
+		return k
 	}
-	host := c.Request.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		return h
+	raw, err := hex.DecodeString(k)
+	if err != nil {
+		return k
 	}
-	return host
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// uniqueName 保证同一份订阅里的代理名/tag 唯一。
+// 重名会让 Mihomo 因 "duplicate name" 拒绝整份配置 (整张订阅全部不可用)。
+func uniqueName(used map[string]int, base string) string {
+	used[base]++
+	if used[base] == 1 {
+		return base
+	}
+	return fmt.Sprintf("%s-%d", base, used[base])
+}
+
+// resolveInbounds 解析节点入站配置 (纯读)。
+//
+// 历史实现在这里是"空则生成新 x25519 密钥并 UPDATE 落库": 订阅是免鉴权的 GET,
+// 并发请求会各自生成不同密钥互相覆盖, 先响应出去的订阅里的 pbk 永远对不上节点实际密钥,
+// 该用户就再也握手不上了 (同时任何持令牌者都能反复覆盖节点密钥)。
+// 现在入站在建节点时一次性生成 (含启动时的历史数据补齐), 订阅侧只读。
+func resolveInbounds(n *model.Node) []common.InboundConfig {
+	var inbounds []common.InboundConfig
+	if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
+		return nil
+	}
+	return inbounds
 }
 
 // HandleSubscription 处理多端自适应订阅主入口
@@ -101,8 +139,8 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 		if nodeAddr == "" {
 			continue
 		}
-		var inbounds []common.InboundConfig
-		if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
+		inbounds := resolveInbounds(&n)
+		if len(inbounds) == 0 {
 			continue
 		}
 
@@ -123,7 +161,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				params := url.Values{}
 				params.Set("security", "reality")
 				params.Set("sni", serverName)
-				params.Set("pbk", pubKey)
+				params.Set("pbk", normalizeRealityKey(pubKey))
 				params.Set("sid", shortID)
 				params.Set("type", "tcp")
 				params.Set("flow", "xtls-rprx-vision")
@@ -148,7 +186,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				params := url.Values{}
 				params.Set("security", "reality")
 				params.Set("sni", serverName)
-				params.Set("pbk", pubKey)
+				params.Set("pbk", normalizeRealityKey(pubKey))
 				params.Set("sid", shortID)
 				params.Set("type", "grpc")
 				params.Set("serviceName", svcName)
@@ -233,14 +271,15 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 	var proxies []map[string]any
 	var proxyNames []string
+	usedNames := make(map[string]int) // 同名节点会导致 Mihomo 拒绝整份配置, 这里强制去重
 
 	for _, n := range nodes {
 		nodeAddr := resolveNodeAddress(&n, c)
 		if nodeAddr == "" {
 			continue
 		}
-		var inbounds []common.InboundConfig
-		if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
+		inbounds := resolveInbounds(&n)
+		if len(inbounds) == 0 {
 			continue
 		}
 
@@ -251,7 +290,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 
 			switch in.Type {
 			case "vless":
-				name := fmt.Sprintf("%s-Reality", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Reality", n.Name))
 				pubKey, _ := in.Options["public_key"].(string)
 				shortID, _ := in.Options["short_id"].(string)
 				serverName, _ := in.Options["server_name"].(string)
@@ -260,18 +299,18 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				}
 
 				p := map[string]any{
-					"name":                name,
-					"type":                "vless",
-					"server":              nodeAddr,
-					"port":                in.ListenPort,
-					"uuid":                user.UUID,
-					"network":             "tcp",
-					"tls":                 true,
-					"udp":                 true,
-					"flow":                "xtls-rprx-vision",
-					"servername":          serverName,
+					"name":       name,
+					"type":       "vless",
+					"server":     nodeAddr,
+					"port":       in.ListenPort,
+					"uuid":       user.UUID,
+					"network":    "tcp",
+					"tls":        true,
+					"udp":        true,
+					"flow":       "xtls-rprx-vision",
+					"servername": serverName,
 					"reality-opts": map[string]any{
-						"public-key": pubKey,
+						"public-key": normalizeRealityKey(pubKey),
 						"short-id":   shortID,
 					},
 					"client-fingerprint": "chrome",
@@ -280,7 +319,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "grpc-reality":
-				name := fmt.Sprintf("%s-gRPC-Reality", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-gRPC-Reality", n.Name))
 				pubKey, _ := in.Options["public_key"].(string)
 				shortID, _ := in.Options["short_id"].(string)
 				serverName, _ := in.Options["server_name"].(string)
@@ -293,17 +332,17 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				}
 
 				p := map[string]any{
-					"name":                name,
-					"type":                "vless",
-					"server":              nodeAddr,
-					"port":                in.ListenPort,
-					"uuid":                user.UUID,
-					"network":             "grpc",
-					"tls":                 true,
-					"udp":                 true,
-					"servername":          serverName,
+					"name":       name,
+					"type":       "vless",
+					"server":     nodeAddr,
+					"port":       in.ListenPort,
+					"uuid":       user.UUID,
+					"network":    "grpc",
+					"tls":        true,
+					"udp":        true,
+					"servername": serverName,
 					"reality-opts": map[string]any{
-						"public-key": pubKey,
+						"public-key": normalizeRealityKey(pubKey),
 						"short-id":   shortID,
 					},
 					"grpc-opts": map[string]any{
@@ -315,7 +354,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "hysteria2":
-				name := fmt.Sprintf("%s-Hy2", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Hy2", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
 					serverName = nodeAddr
@@ -334,7 +373,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "tuic":
-				name := fmt.Sprintf("%s-TUIC", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-TUIC", n.Name))
 				p := map[string]any{
 					"name":                  name,
 					"type":                  "tuic",
@@ -350,7 +389,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "shadowsocks":
-				name := fmt.Sprintf("%s-Shadowsocks", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Shadowsocks", n.Name))
 				method, _ := in.Options["method"].(string)
 				if method == "" {
 					method = "2022-blake3-aes-128-gcm"
@@ -372,7 +411,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "vless-ws":
-				name := fmt.Sprintf("%s-VLESS-WS", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-VLESS-WS", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
 					serverName = nodeAddr
@@ -400,7 +439,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "trojan":
-				name := fmt.Sprintf("%s-Trojan", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Trojan", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
 					serverName = nodeAddr
@@ -414,6 +453,25 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 					"udp":              true,
 					"sni":              serverName,
 					"skip-cert-verify": true,
+				}
+				proxies = append(proxies, p)
+				proxyNames = append(proxyNames, name)
+
+			case "anytls":
+				name := uniqueName(usedNames, fmt.Sprintf("%s-AnyTLS", n.Name))
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = nodeAddr
+				}
+				p := map[string]any{
+					"name":             name,
+					"type":             "anytls",
+					"server":           nodeAddr,
+					"port":             in.ListenPort,
+					"password":         user.UUID,
+					"sni":              serverName,
+					"skip-cert-verify": true,
+					"udp":              true,
 				}
 				proxies = append(proxies, p)
 				proxyNames = append(proxyNames, name)
@@ -479,8 +537,8 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 		if nodeAddr == "" {
 			continue
 		}
-		var inbounds []common.InboundConfig
-		if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
+		inbounds := resolveInbounds(&n)
+		if len(inbounds) == 0 {
 			continue
 		}
 
@@ -511,7 +569,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 						"server_name": serverName,
 						"reality": map[string]any{
 							"enabled":    true,
-							"public_key": pubKey,
+							"public_key": normalizeRealityKey(pubKey),
 							"short_id":   shortID,
 						},
 						"utls": map[string]any{
@@ -551,7 +609,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 						"server_name": serverName,
 						"reality": map[string]any{
 							"enabled":    true,
-							"public_key": pubKey,
+							"public_key": normalizeRealityKey(pubKey),
 							"short_id":   shortID,
 						},
 						"utls": map[string]any{
@@ -588,17 +646,17 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 			case "tuic":
 				tag := fmt.Sprintf("%s-TUIC", n.Name)
 				out := map[string]any{
-					"type":        "tuic",
-					"tag":         tag,
-					"server":      nodeAddr,
-					"server_port": in.ListenPort,
-					"uuid":        user.UUID,
-					"password":    user.UUID,
+					"type":               "tuic",
+					"tag":                tag,
+					"server":             nodeAddr,
+					"server_port":        in.ListenPort,
+					"uuid":               user.UUID,
+					"password":           user.UUID,
 					"congestion_control": "bbr",
 					"tls": map[string]any{
-						"enabled":     true,
-						"alpn":        []string{"h3"},
-						"insecure":    true,
+						"enabled":  true,
+						"alpn":     []string{"h3"},
+						"insecure": true,
 					},
 				}
 				outbounds = append(outbounds, out)
@@ -818,6 +876,65 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 	singboxURL := fmt.Sprintf("sing-box://import-remote-profile?url=%s#%s", url.QueryEscape(subBase+"?type=sing-box"), url.QueryEscape("Work-V-"+user.Username))
 	srURL := "sub://" + base64.URLEncoding.EncodeToString([]byte(subBase))
 
+	// 组装各节点的单个独立直连协议链接与二维码
+	var nodeCardsHTML strings.Builder
+	totalSingleLinks := 0
+	for _, n := range nodes {
+		addr := resolveNodeAddress(&n, c)
+		if addr == "" {
+			continue
+		}
+		nodeCopy := n
+		nodeCopy.Address = addr
+		sLinks := service.GenerateNodeShareLinks(&nodeCopy, user.UUID, user.Username)
+		for idx, sl := range sLinks {
+			totalSingleLinks++
+			qrID := fmt.Sprintf("qr-%d-%d", n.ID, idx)
+			badgeColor := "#38bdf8"
+			if strings.Contains(strings.ToLower(sl.Protocol), "hy") || strings.Contains(strings.ToLower(sl.Protocol), "tuic") {
+				badgeColor = "#a855f7"
+			}
+			qrTarget := url.QueryEscape(sl.Link)
+			safeLink := html.EscapeString(sl.Link)
+			nodeCardsHTML.WriteString(fmt.Sprintf(`
+      <div style="background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:12px 14px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div style="flex:1;min-width:180px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:13px;font-weight:700;color:#f8fafc;">%s</span>
+              <span style="background:%s20;color:%s;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600;">%s</span>
+            </div>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">%s · 端口: %d (%s)</div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button onclick="copyText('%s')" style="background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);padding:6px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">📋 复制单链接</button>
+            <button onclick="toggleQR('%s')" style="background:rgba(168,85,247,0.15);color:#c084fc;border:1px solid rgba(168,85,247,0.3);padding:6px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">📱 单节点码</button>
+          </div>
+        </div>
+        <div id="%s" style="display:none;text-align:center;margin-top:12px;padding-top:12px;border-top:1px dashed rgba(255,255,255,0.08);">
+          <img src="/api/v1/qrcode?text=%s" style="width:130px;height:130px;background:white;padding:6px;border-radius:8px;display:inline-block;" alt="Node QR">
+          <div style="font-size:10px;color:#94a3b8;margin-top:4px;">客户端扫码直接接入该节点</div>
+        </div>
+      </div>`,
+				html.EscapeString(sl.Name), badgeColor, badgeColor, strings.ToUpper(sl.Protocol),
+				html.EscapeString(sl.Description), sl.Port, sl.PortType,
+				safeLink, qrID, qrID, qrTarget,
+			))
+		}
+	}
+
+	nodesSectionHTML := ""
+	if totalSingleLinks > 0 {
+		nodesSectionHTML = fmt.Sprintf(`
+    <div style="margin-top:24px;border-top:1px solid rgba(255,255,255,0.08);padding-top:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-size:14px;font-weight:700;color:#f8fafc;">📡 独立节点直连 (%d 个接入点)</span>
+        <span style="font-size:11px;color:#94a3b8;">支持单个协议直接导入使用</span>
+      </div>
+      <div>%s</div>
+    </div>`, totalSingleLinks, nodeCardsHTML.String())
+	}
+
 	html := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="zh-CN" class="dark">
 <head>
@@ -827,7 +944,7 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: #090d16; color: #f1f5f9; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
-    .card { background: rgba(30, 41, 59, 0.75); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 24px; max-width: 520px; width: 100%%; padding: 28px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+    .card { background: rgba(30, 41, 59, 0.75); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 24px; max-width: 540px; width: 100%%; padding: 28px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
     .title { font-size: 20px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px; }
     .stat-box { background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px; padding: 18px; margin-bottom: 20px; }
@@ -875,7 +992,7 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
       <a href="%s" class="btn btn-clash">⚡ 导入 Clash / Verge</a>
       <a href="%s" class="btn btn-singbox">📦 导入 Sing-box</a>
       <a href="%s" class="btn btn-sr">🚀 导入 小火箭</a>
-      <button onclick="navigator.clipboard.writeText('%s').then(()=>alert('订阅链接已复制到剪贴板！'))" class="btn btn-copy">📋 复制订阅地址</button>
+      <button onclick="copyText('%s')" class="btn btn-copy">📋 复制订阅地址</button>
     </div>
 
     <div style="display:flex;gap:10px;margin-bottom:14px;">
@@ -889,9 +1006,31 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
       <img src="/api/v1/qrcode?text=%s" class="qr-img" alt="Subscription QR Code">
       <p style="font-size:11px;color:#64748b;">支持手机客户端打开相机或小火箭直接扫码导入</p>
     </div>
+
+    %s
   </div>
+
+  <script>
+    function copyText(t) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(t).then(function() {
+          alert('已复制到剪贴板！');
+        }).catch(function() {
+          prompt('请长按复制链接:', t);
+        });
+      } else {
+        prompt('请长按复制链接:', t);
+      }
+    }
+    function toggleQR(id) {
+      var el = document.getElementById(id);
+      if (el) {
+        el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
+      }
+    }
+  </script>
 </body>
-</html>`, percent, statusBadge, user.Username, expireStr, usedStr, limitStr, percent, clashURL, singboxURL, srURL, subBase, subBase, subBase, subBase, url.QueryEscape(subBase))
+</html>`, percent, statusBadge, user.Username, expireStr, usedStr, limitStr, percent, clashURL, singboxURL, srURL, subBase, subBase, subBase, subBase, url.QueryEscape(subBase), nodesSectionHTML)
 
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, html)

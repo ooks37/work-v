@@ -23,10 +23,10 @@ const (
 
 // WSMessage 统一长连通信帧结构
 type WSMessage struct {
-	Type      string          `json:"type"`                // 消息类型
+	Type      string          `json:"type"`                 // 消息类型
 	NodeToken string          `json:"node_token,omitempty"` // 节点 Token
-	Timestamp int64           `json:"timestamp"`           // 毫秒时间戳
-	Payload   json.RawMessage `json:"payload,omitempty"`   // 负载数据
+	Timestamp int64           `json:"timestamp"`            // 毫秒时间戳
+	Payload   json.RawMessage `json:"payload,omitempty"`    // 负载数据
 }
 
 // NewWSMessage 辅助构造消息
@@ -42,17 +42,27 @@ func NewWSMessage(msgType string, payload any) (*WSMessage, error) {
 	}, nil
 }
 
+// Version Agent 版本号 (随节点心跳上报)
+const Version = "2.1.0"
+
+// ConfigAckPayload Agent 应用配置后的回执
+type ConfigAckPayload struct {
+	ConfigHash string `json:"config_hash"`
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
+}
+
 // NodeHardwareStats 节点物理状态上报载荷
 type NodeHardwareStats struct {
-	CPUPercent    float64 `json:"cpu_percent"`    // CPU 使用率 0~100
-	MemUsedBytes  uint64  `json:"mem_used_bytes"` // 内存已用 (Bytes)
-	MemTotalBytes uint64  `json:"mem_total_bytes"`// 内存总量 (Bytes)
-	NetRxRate     uint64  `json:"net_rx_rate"`    // 实时下行速率 (Bytes/s)
-	NetTxRate     uint64  `json:"net_tx_rate"`    // 实时上行速率 (Bytes/s)
-	SingboxStatus string  `json:"singbox_status"` // "running", "stopped", "error"
-	SingboxPid    int     `json:"singbox_pid"`    // 进程 PID
-	UptimeSec     uint64  `json:"uptime_sec"`     // 系统运行时间
-	Version       string  `json:"version"`        // Agent 版本
+	CPUPercent    float64 `json:"cpu_percent"`     // CPU 使用率 0~100
+	MemUsedBytes  uint64  `json:"mem_used_bytes"`  // 内存已用 (Bytes)
+	MemTotalBytes uint64  `json:"mem_total_bytes"` // 内存总量 (Bytes)
+	NetRxRate     uint64  `json:"net_rx_rate"`     // 实时下行速率 (Bytes/s)
+	NetTxRate     uint64  `json:"net_tx_rate"`     // 实时上行速率 (Bytes/s)
+	SingboxStatus string  `json:"singbox_status"`  // "running", "stopped", "error"
+	SingboxPid    int     `json:"singbox_pid"`     // 进程 PID
+	UptimeSec     uint64  `json:"uptime_sec"`      // 系统运行时间
+	Version       string  `json:"version"`         // Agent 版本
 }
 
 // UserDeltaTraffic 单用户流量增量
@@ -69,20 +79,20 @@ type TrafficReportPayload struct {
 
 // InboundConfig 协议入站配置
 type InboundConfig struct {
-	Type       string         `json:"type"`       // "vless", "hysteria2", "shadowsocks"
-	Tag        string         `json:"tag"`        // "vless-in", "hy2-in", "ss-in"
-	ListenPort int            `json:"listen_port"`// 监听端口
-	Enabled    bool           `json:"enabled"`    // 是否启用
-	Options    map[string]any `json:"options"`    // 协议特定参数 (Reality 密钥、伪装域名、证书路径等)
+	Type       string         `json:"type"`        // "vless", "hysteria2", "shadowsocks"
+	Tag        string         `json:"tag"`         // "vless-in", "hy2-in", "ss-in"
+	ListenPort int            `json:"listen_port"` // 监听端口
+	Enabled    bool           `json:"enabled"`     // 是否启用
+	Options    map[string]any `json:"options"`     // 协议特定参数 (Reality 密钥、伪装域名、证书路径等)
 }
 
 // UserProfile 用户凭据与认证信息
 type UserProfile struct {
-	ID        uint   `json:"id"`
-	Username  string `json:"username"`
-	UUID      string `json:"uuid"`     // VLESS UUID / Hysteria2 密码 / SS 密码
-	Password  string `json:"password"` // 补充密钥
-	Status    string `json:"status"`   // "active", "suspended", "expired"
+	ID       uint   `json:"id"`
+	Username string `json:"username"`
+	UUID     string `json:"uuid"`     // VLESS UUID / Hysteria2 密码 / SS 密码
+	Password string `json:"password"` // 补充密钥
+	Status   string `json:"status"`   // "active", "suspended", "expired"
 }
 
 // NodeConfigPayload Master 下发给 Agent 的完整 sing-box 运行配置

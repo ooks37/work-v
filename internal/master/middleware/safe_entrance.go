@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -15,7 +16,67 @@ import (
 
 const (
 	SafeCookieName = "workv_entrance_token"
+
+	// entranceCookieMaxAge 入口凭证有效期 (30 天)
+	entranceCookieMaxAge = 30 * 24 * 3600
 )
+
+var (
+	staticAssetsMu sync.RWMutex
+	// allowedStaticAssets 免检的根目录静态资源 (由前端产物目录扫描注入)。
+	// 只有在这里登记过的文件才允许绕过安全入口。
+	allowedStaticAssets = map[string]bool{}
+)
+
+// SetAllowedStaticAssets 注册免检的根静态资源 (由 SetupRouter 扫描前端产物目录得到)
+func SetAllowedStaticAssets(paths []string) {
+	staticAssetsMu.Lock()
+	defer staticAssetsMu.Unlock()
+	allowedStaticAssets = make(map[string]bool, len(paths))
+	for _, p := range paths {
+		allowedStaticAssets[p] = true
+	}
+}
+
+// IsAllowedStaticAsset 判断路径是否为已登记的根静态资源
+func IsAllowedStaticAsset(path string) bool {
+	staticAssetsMu.RLock()
+	defer staticAssetsMu.RUnlock()
+	return allowedStaticAssets[path]
+}
+
+// ValidateSafePath 校验管理员设置的安全入口路径, 返回 nil 表示合法 (空串/"/"表示关闭)
+func ValidateSafePath(path string) error {
+	p := strings.TrimSpace(path)
+	if p == "" || p == "/" {
+		return nil
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	if len(p) > 64 {
+		return fmt.Errorf("安全入口路径过长, 最多 64 个字符")
+	}
+	if strings.ContainsAny(p, " \t\r\n?#%&\\\"'<>") {
+		return fmt.Errorf("安全入口路径包含非法字符")
+	}
+	if strings.Contains(p, "..") {
+		return fmt.Errorf("安全入口路径不能包含 ..")
+	}
+	// 保留前缀: 抢占它们会导致订阅、节点安装脚本或接口不可用
+	for _, reserved := range []string{
+		"/api", "/sub", "/ws", "/download", "/install.sh", "/index.html", "/favicon.ico",
+	} {
+		if p == reserved || strings.HasPrefix(p, reserved+"/") {
+			return fmt.Errorf("安全入口路径不能使用保留路径 %s", reserved)
+		}
+	}
+	// 带扩展名会被静态资源规则/浏览器缓存混淆
+	if ext := filepath.Ext(p); ext != "" {
+		return fmt.Errorf("安全入口路径不能带文件扩展名 (如 %s)", ext)
+	}
+	return nil
+}
 
 type SafeEntranceConfig struct {
 	mu       sync.RWMutex
@@ -62,16 +123,22 @@ func GetSafePath() (bool, string) {
 	return GlobalSafeEntrance.Enabled, GlobalSafeEntrance.SafePath
 }
 
+// SetSafeEntranceCookie 向当前响应写入与当前安全入口匹配的凭证 Cookie。
+// 管理员修改入口路径后必须立刻调用, 否则他自己的浏览器会被新规则挡在门外。
+func SetSafeEntranceCookie(c *gin.Context) {
+	_, safePath := GetSafePath()
+	if safePath == "" {
+		return
+	}
+	isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	// HttpOnly: 该凭证只用于服务端校验, 前端不读取 (避免被脚本/扩展窃取)
+	c.SetCookie(SafeCookieName, computeSafeEntryToken(safePath), entranceCookieMaxAge, "/", "", isHTTPS, true)
+}
+
 // HandleSafeEntryVisit 当访问配置的安全入口时，种入专属凭据并跳转到控制台
 func HandleSafeEntryVisit(c *gin.Context) {
-	_, safePath := GetSafePath()
-	token := computeSafeEntryToken(safePath)
-	isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
-
-	// 设置动态 Cookie，有效期 30 天
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(SafeCookieName, token, 30*24*3600, "/", "", isHTTPS, false)
-	c.SetCookie("workv_entry_ok", "1", 30*24*3600, "/", "", isHTTPS, false)
+	SetSafeEntranceCookie(c)
 	c.Redirect(http.StatusFound, "/")
 }
 
@@ -237,16 +304,19 @@ func SafeEntranceFilter() gin.HandlerFunc {
 			return
 		}
 
-		// 2. 静态资源（js/css/图片/字体/ico）无论何时直接放行！绝不可拦截返回 HTML，否则会导致 JS 语法错误与白屏！
-		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") || strings.HasSuffix(path, ".png") ||
-			strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".svg") || strings.HasSuffix(path, ".ico") ||
-			strings.HasSuffix(path, ".woff") || strings.HasSuffix(path, ".woff2") || strings.HasSuffix(path, ".ttf") {
+		// 2. 静态资源只放行"已经登记在册的根目录文件" (tailwind.js / vue.global.prod.js 等),
+		//    绝不可按后缀放行! 历史实现用 HasSuffix(path, ".js") 之类的判断,
+		//    于是任何以这些后缀结尾的请求都会跳过安全入口:
+		//      - 未授权访问 /x.js 会直接拿到面板 HTML (NoRoute 回落 index.html);
+		//      - /api/v1/admin/nodes/1.js 这类带 :id 的管理接口也能绕过入口校验。
+		if IsAllowedStaticAsset(path) {
 			c.Next()
 			return
 		}
 
 		// 3. 白名单免检路径：订阅链接、Agent WS 长连、安装脚本、二进制下载、原生离线二维码
-		if strings.HasPrefix(path, "/sub/") || strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/download/") || path == "/install.sh" || path == "/api/v1/qrcode" {
+		if strings.HasPrefix(path, "/sub/") || strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/download/") ||
+			path == "/install.sh" || path == "/api/v1/install.sh" || path == "/api/v1/qrcode" {
 			c.Next()
 			return
 		}
@@ -260,16 +330,9 @@ func SafeEntranceFilter() gin.HandlerFunc {
 			return
 		}
 
-		// 5. 允许通过 URL 参数紧急带入密钥访问 (例如 ?safe_key=/safe_entry)
-		keyParam := c.Query("safe_key")
-		if keyParam != "" && "/"+strings.TrimPrefix(keyParam, "/") == safePath {
-			isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
-			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie(SafeCookieName, expectedToken, 30*24*3600, "/", "", isHTTPS, false)
-			c.SetCookie("workv_entry_ok", "1", 30*24*3600, "/", "", isHTTPS, false)
-			c.Next()
-			return
-		}
+		// 5. 已移除 ?safe_key= 形式的"URL 带密钥登录":
+		//    它会把入口凭据写进 nginx 访问日志/浏览器历史/Referer, 等于把安全入口泄露出去。
+		//    入口路径本身是 16 位随机 hex (2^64 空间), 暴力枚举不可行, 因此只保留 Cookie 认证。
 
 		// 7. 未授权访问拦截：API 返回 403 JSON，浏览器展示类似宝塔安全入口提示页
 		if strings.HasPrefix(path, "/api/") {

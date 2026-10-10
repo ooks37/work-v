@@ -12,11 +12,45 @@ COLOR_CYAN="\033[36m"
 COLOR_BOLD="\033[1m"
 COLOR_RESET="\033[0m"
 
+SERVICE_MASTER="work-v-master"
+SERVICE_AGENT="work-v-agent"
+UNIT_MASTER="/etc/systemd/system/${SERVICE_MASTER}.service"
+
+# 默认布局 (install.sh 的标准安装路径)
 APP_DIR="/opt/work-v-master"
 BIN_FILE="$APP_DIR/work-v-master"
 DB_FILE="$APP_DIR/data/work-v.db"
-SERVICE_MASTER="work-v-master"
-SERVICE_AGENT="work-v-agent"
+MASTER_PORT="8080"
+
+# parse_unit 从 systemd 单元反推真实安装路径/端口/数据库。
+# 历史问题: CLI 硬编码 8080 与 /opt/work-v-master, 在自定义端口(如 8088)或自定义目录
+# (如 /www/wwwroot/work-v) 部署时会打印错误的入口地址, 甚至误报"未安装"。
+parse_unit() {
+    local unit="$1"
+    [ -f "$unit" ] || return 1
+
+    local exec_line bin_path port db_path
+    exec_line=$(grep -m1 '^ExecStart=' "$unit" 2>/dev/null | sed 's/^ExecStart=//')
+    [ -n "$exec_line" ] || return 1
+
+    bin_path=$(printf '%s\n' "$exec_line" | awk '{print $1}')
+    port=$(printf '%s\n' "$exec_line" | grep -oE -- '-port[= ][0-9]+' | head -n1 | grep -oE '[0-9]+')
+    db_path=$(printf '%s\n' "$exec_line" | grep -oE -- '-db[= ][^ ]+' | head -n1 | sed -E 's/^-db[= ]//')
+
+    if [ -n "$bin_path" ]; then
+        BIN_FILE="$bin_path"
+        APP_DIR=$(dirname "$bin_path")
+    fi
+    [ -n "$port" ] && MASTER_PORT="$port"
+    [ -n "$db_path" ] && DB_FILE="$db_path"
+    return 0
+}
+
+# run_master 统一入口: 始终带上真实端口与数据库路径, 保证回显的入口地址正确
+run_master() {
+    parse_unit "$UNIT_MASTER" >/dev/null 2>&1 || true
+    "$BIN_FILE" -port "$MASTER_PORT" -db "$DB_FILE" "$@"
+}
 
 read_input() {
     local prompt="$1"
@@ -35,7 +69,8 @@ read_input() {
     if [ -z "$val" ] && [ -n "$default_val" ]; then
         val="$default_val"
     fi
-    eval "$var_name=\"$val\""
+    # 用 printf -v 赋值: eval 会把用户输入里的引号/$(...) 当代码执行
+    printf -v "$var_name" '%s' "$val"
 }
 
 check_master_active() {
@@ -59,8 +94,9 @@ check_agent_active() {
 }
 
 show_info() {
+    parse_unit "$UNIT_MASTER" >/dev/null 2>&1 || true
     if [ -f "$BIN_FILE" ]; then
-        $BIN_FILE -entry -db "$DB_FILE"
+        run_master -entry
     else
         echo -e "${COLOR_RED}❌ 本机未安装 Work-V Master 主控端${COLOR_RESET}"
     fi
@@ -130,14 +166,14 @@ set_safe_entry() {
         read_input "请输入新的安全入口路径 (例如 /safe_entry 或 /my_console): " new_path ""
     fi
     if [ -n "$new_path" ]; then
-        $BIN_FILE -set-entry "$new_path" -db "$DB_FILE"
+        run_master -set-entry "$new_path"
         systemctl restart "$SERVICE_MASTER"
         echo -e "${COLOR_GREEN}✅ 安全入口已更新并自动重启生效！${COLOR_RESET}"
     fi
 }
 
 disable_safe_entry() {
-    $BIN_FILE -disable-entry -db "$DB_FILE"
+    run_master -disable-entry
     systemctl restart "$SERVICE_MASTER"
     echo -e "${COLOR_GREEN}✅ 安全入口保护已关闭！可直接访问域名登录。${COLOR_RESET}"
 }
@@ -148,17 +184,18 @@ set_password() {
         read_input "请输入管理员 admin 的新密码: " pwd ""
     fi
     if [ -n "$pwd" ]; then
-        $BIN_FILE -set-password "$pwd" -db "$DB_FILE"
+        run_master -set-password "$pwd"
     fi
 }
 
 reset_password_default() {
-    $BIN_FILE -reset-admin -db "$DB_FILE"
+    run_master -reset-admin
 }
 
 list_all_nodes() {
+    parse_unit "$UNIT_MASTER" >/dev/null 2>&1 || true
     if [ -f "$BIN_FILE" ]; then
-        $BIN_FILE -nodes -db "$DB_FILE"
+        run_master -nodes
     fi
 }
 
@@ -167,8 +204,9 @@ add_new_node() {
     if [ -z "$node_name" ]; then
         read_input "请输入新节点标识名称 (如 香港BGP-01 / 美西CN2): " node_name "新建节点"
     fi
+    parse_unit "$UNIT_MASTER" >/dev/null 2>&1 || true
     if [ -f "$BIN_FILE" ]; then
-        $BIN_FILE -add-node "$node_name" -db "$DB_FILE"
+        run_master -add-node "$node_name"
     fi
 }
 
@@ -178,10 +216,11 @@ test_nginx() {
         nginx -t || true
     fi
     echo -e "${COLOR_YELLOW}测试本地响应状态码...${COLOR_RESET}"
-    curl -s -o /dev/null -w "• 本地 127.0.0.1:8080: %{http_code}\n" http://127.0.0.1:8080/ || true
+    parse_unit "$UNIT_MASTER" >/dev/null 2>&1 || true
+    curl -s -o /dev/null -w "• 本地 127.0.0.1:${MASTER_PORT}: %{http_code}\n" "http://127.0.0.1:${MASTER_PORT}/" || true
     if [ -f "$BIN_FILE" ]; then
         local cur_info
-        cur_info=$($BIN_FILE -entry -db "$DB_FILE" 2>/dev/null | grep -i "访问入口" | awk '{print $NF}' | head -n 1 || true)
+        cur_info=$(run_master -entry 2>/dev/null | grep -i "访问入口" | awk '{print $NF}' | head -n 1 || true)
         if [ -n "$cur_info" ]; then
             curl -s -o /dev/null -w "• 当前配置入口 $cur_info: %{http_code}\n" "$cur_info" || true
         fi
@@ -195,9 +234,10 @@ set_domain() {
         echo -e "${COLOR_CYAN}===== 配置/修改 Work-V 主控外网访问域名 =====${COLOR_RESET}"
         read_input "请输入您的域名 (例如 vpn.example.com，输入 none 或留空则恢复纯 IP 访问): " new_dom ""
     fi
+    parse_unit "$UNIT_MASTER" >/dev/null 2>&1 || true
     if [ -f "$BIN_FILE" ]; then
         if [ "$new_dom" = "none" ] || [ "$new_dom" = "clear" ] || [ -z "$new_dom" ]; then
-            $BIN_FILE -domain "none" -db "$DB_FILE"
+            run_master -domain "none"
             if [ -f "/etc/systemd/system/${SERVICE_MASTER}.service" ]; then
                 sed -i "s| -domain [^ ]*||g" "/etc/systemd/system/${SERVICE_MASTER}.service" 2>/dev/null || true
                 systemctl daemon-reload 2>/dev/null || true
@@ -206,7 +246,12 @@ set_domain() {
             echo -e "${COLOR_GREEN}✅ 已清除域名绑定，恢复为纯 IP 直连访问模式！${COLOR_RESET}"
         else
             new_dom=$(echo "$new_dom" | tr -d ' ' | sed -E 's|^https?://||; s|/$||')
-            $BIN_FILE -domain "$new_dom" -db "$DB_FILE"
+            # 域名会被拼进 sed 替换段与免鉴权 /install.sh, 必须先做字符白名单校验
+            if ! echo "$new_dom" | grep -qE '^[A-Za-z0-9.-]+(:[0-9]{1,5})?$'; then
+                echo -e "${COLOR_RED}❌ 域名格式不合法 (只允许字母/数字/点/横线, 可带端口)${COLOR_RESET}"
+                return 1
+            fi
+            run_master -domain "$new_dom"
             if [ -f "/etc/systemd/system/${SERVICE_MASTER}.service" ]; then
                 sed -i "s| -domain [^ ]*||g" "/etc/systemd/system/${SERVICE_MASTER}.service" 2>/dev/null || true
                 sed -i "s|work-v.db|work-v.db -domain $new_dom|g" "/etc/systemd/system/${SERVICE_MASTER}.service" 2>/dev/null || true
@@ -215,7 +260,7 @@ set_domain() {
             systemctl restart "$SERVICE_MASTER" 2>/dev/null || true
             echo -e "${COLOR_GREEN}✅ 域名配置已保存并已重启主控服务！${COLOR_RESET}"
         fi
-        $BIN_FILE -entry -db "$DB_FILE"
+        run_master -entry
     else
         echo -e "${COLOR_RED}❌ 主控端二进制不存在${COLOR_RESET}"
     fi

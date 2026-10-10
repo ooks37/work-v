@@ -44,7 +44,8 @@ read_input() {
     if [ -z "$val" ] && [ -n "$default_val" ]; then
         val="$default_val"
     fi
-    eval "$var_name=\"$val\""
+    # 用 printf -v 赋值: eval 会把用户输入里的引号/$(...) 当代码执行
+    printf -v "$var_name" '%s' "$val"
 }
 
 detect_env() {
@@ -279,11 +280,22 @@ install_master() {
     elif [ -f "./work-v-master-linux" ]; then
         cp -f ./work-v-master-linux "$INSTALL_DIR/work-v-master"
     else
+        # 关键: 直接 curl -o 覆盖"正在运行的二进制"必然 ETXTBSY (Text file busy) 而失败,
+        # 且历史实现把失败吞掉, 于是升级看起来成功、实际还在跑旧文件。
+        # 这里统一下载到 .new 再原子 mv 替换 (mv 替换运行中的二进制是允许的)。
         echo "正在从主控/源拉取预编译 Master 产物: $SERVER/download/master-$GO_ARCH ..."
-        curl -fsSL "$SERVER/download/master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master" 2>/dev/null || {
+        rm -f "$INSTALL_DIR/work-v-master.new"
+        curl -fsSL "$SERVER/download/master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master.new" 2>/dev/null || {
             echo -e "${COLOR_YELLOW}⚠️ 从本地主控直接拉取失败，尝试从备用仓库镜像获取...${COLOR_RESET}"
-            curl -fsSL "https://github.com/ooks37/work-v/releases/latest/download/work-v-master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master" 2>/dev/null || true
+            curl -fsSL "https://github.com/ooks37/work-v/releases/latest/download/work-v-master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master.new" 2>/dev/null || true
         }
+        # 校验: 必须是非空并且是可执行的 ELF/Mach-O 产物
+        if [ -s "$INSTALL_DIR/work-v-master.new" ]; then
+            chmod +x "$INSTALL_DIR/work-v-master.new"
+            mv -f "$INSTALL_DIR/work-v-master.new" "$INSTALL_DIR/work-v-master"
+        else
+            rm -f "$INSTALL_DIR/work-v-master.new"
+        fi
     fi
 
     if [ ! -f "$INSTALL_DIR/work-v-master" ]; then
@@ -330,6 +342,16 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
+    # 应用命令行指定的自定义安全入口 (历史实现只解析 --entry 却从未写入主控配置)
+    if [ -n "$SAFE_PATH" ] && [ "$SAFE_PATH" != "/safe_entry" ]; then
+        if "$INSTALL_DIR/work-v-master" -db "$INSTALL_DIR/data/work-v.db" -set-entry "$SAFE_PATH" >/dev/null 2>&1; then
+            echo -e "🔐 已设置自定义安全入口: ${COLOR_GREEN}${SAFE_PATH}${COLOR_RESET}"
+        else
+            echo -e "${COLOR_YELLOW}⚠️ 自定义安全入口设置失败, 将使用默认值 /safe_entry${COLOR_RESET}"
+            SAFE_PATH="/safe_entry"
+        fi
+    fi
+
     systemctl daemon-reload
     systemctl enable work-v-master
     systemctl restart work-v-master
@@ -343,13 +365,18 @@ EOF
     echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
     echo -e "${COLOR_GREEN}🎉 Work-V 主控端已成功部署并启动！${COLOR_RESET}"
     echo -e "${COLOR_GREEN}================================================================================${COLOR_RESET}"
+    # 读取主控实际生成的安全入口路径 (宝塔风格随机入口, 不再硬编码 /safe_entry)
+    ENTRY_PATH=$("$INSTALL_DIR/work-v-master" -db "$INSTALL_DIR/data/work-v.db" -port "$PORT" -entry 2>/dev/null | grep -m1 '安全入口路径' | sed -E 's/.*: *//' | tr -d '\r')
+    [ -z "$ENTRY_PATH" ] && ENTRY_PATH="$SAFE_PATH"
+
     if [ -n "$DOMAIN" ]; then
         echo -e "• 外网访问域名: ${COLOR_CYAN}$DOMAIN${COLOR_RESET}"
-        echo -e "• 控制台入口:   ${COLOR_GREEN}http://$DOMAIN$SAFE_PATH${COLOR_RESET} (配置SSL后: https://$DOMAIN$SAFE_PATH)"
+        echo -e "• 控制台入口:   ${COLOR_GREEN}https://$DOMAIN$ENTRY_PATH${COLOR_RESET}"
     else
         echo -e "• 访问方式:     ${COLOR_YELLOW}原生 IP + 端口直连${COLOR_RESET}"
-        echo -e "• 控制台入口:   ${COLOR_GREEN}http://$LOCAL_IP:$PORT$SAFE_PATH${COLOR_RESET}"
+        echo -e "• 控制台入口:   ${COLOR_GREEN}http://$LOCAL_IP:$PORT$ENTRY_PATH${COLOR_RESET}"
     fi
+    echo -e "• 随机安全入口会写入数据库, 随时可用 ${COLOR_CYAN}work-v default${COLOR_RESET} 查询"
     if [ -x /usr/local/bin/work-v ]; then
         /usr/local/bin/work-v default 2>/dev/null || true
     else
@@ -387,13 +414,22 @@ install_agent() {
 
     SERVER="${SERVER%/}"
     echo -e "  主控地址: ${COLOR_CYAN}$SERVER${COLOR_RESET}"
-    echo -e "  节点令牌: ${COLOR_CYAN}$TOKEN${COLOR_RESET}"
+    # 令牌不回显完整值 (自动部署模式下该输出会写入主控的部署日志/数据库)
+    echo -e "  节点令牌: ${COLOR_CYAN}${TOKEN:0:12}***${COLOR_RESET}"
 
     # NAT 机器模式处理
+    # 说明: 端口无法由本脚本改变。节点实际监听端口由主控下发 (默认 2083/tcp, 2053/tcp,
+    # 8445/tcp, 8443/udp, 8444/udp), NAT 机器必须自行把这些端口映射到公网。
+    # 这里只做"放行 + 提示", 不再假装 --port 能改写节点监听端口。
     if [ -n "$CUSTOM_PORT" ]; then
         echo -e "  外部映射端口: ${COLOR_CYAN}$CUSTOM_PORT${COLOR_RESET} (NAT 机器模式)"
+        echo -e "  ${COLOR_YELLOW}提示: 该端口仅用于防火墙放行/记录, 节点监听端口由主控下发。${COLOR_RESET}"
         open_firewall_ports "$CUSTOM_PORT"
     fi
+    echo -e "  ${COLOR_CYAN}正在放行节点默认协议端口 (2083/2053/8445 TCP, 8443/8444 UDP)...${COLOR_RESET}"
+    for _np in 2083 2053 8445 8443 8444; do
+        open_firewall_ports "$_np"
+    done
 
     INSTALL_DIR="/opt/work-v-agent"
     mkdir -p "$INSTALL_DIR"
@@ -407,10 +443,18 @@ install_agent() {
         cp -f /opt/work-v-master/work-v-agent "$INSTALL_DIR/work-v-agent"
     else
         echo "正在从主控拉取 prebuilt Agent 二进制: $SERVER/download/agent-$GO_ARCH ..."
-        curl -fsSL "$SERVER/download/agent-$GO_ARCH" -o "$INSTALL_DIR/work-v-agent" 2>/dev/null || {
+        # 同 master: 覆盖运行中的二进制会 ETXTBSY, 必须下载到 .new 再原子替换
+        rm -f "$INSTALL_DIR/work-v-agent.new"
+        curl -fsSL "$SERVER/download/agent-$GO_ARCH" -o "$INSTALL_DIR/work-v-agent.new" 2>/dev/null || {
             echo -e "${COLOR_YELLOW}⚠️ 从主控直接拉取失败，尝试通用包...${COLOR_RESET}"
-            curl -fsSL "$SERVER/download/work-v-agent" -o "$INSTALL_DIR/work-v-agent" 2>/dev/null || true
+            curl -fsSL "$SERVER/download/work-v-agent" -o "$INSTALL_DIR/work-v-agent.new" 2>/dev/null || true
         }
+        if [ -s "$INSTALL_DIR/work-v-agent.new" ]; then
+            chmod +x "$INSTALL_DIR/work-v-agent.new"
+            mv -f "$INSTALL_DIR/work-v-agent.new" "$INSTALL_DIR/work-v-agent"
+        else
+            rm -f "$INSTALL_DIR/work-v-agent.new"
+        fi
     fi
 
     if [ ! -f "$INSTALL_DIR/work-v-agent" ]; then
@@ -452,6 +496,14 @@ install_agent() {
   "singbox_path": "/usr/local/bin/sing-box"
 }
 EOF
+    chmod 600 "$INSTALL_DIR/config.json"   # 含令牌, 仅 root 可读
+
+    # 令牌单独存放到 0600 的环境文件, 避免出现在 world-readable 的 systemd 单元里
+    mkdir -p /etc/work-v && chmod 700 /etc/work-v
+    cat > /etc/work-v/agent.env <<EOF
+WORKV_TOKEN=$TOKEN
+EOF
+    chmod 600 /etc/work-v/agent.env
 
     # 注册 systemd 服务
     cat > /etc/systemd/system/work-v-agent.service <<EOF
@@ -463,7 +515,8 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/work-v-agent --server $SERVER --token $TOKEN
+EnvironmentFile=-/etc/work-v/agent.env
+ExecStart=$INSTALL_DIR/work-v-agent --server $SERVER
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
@@ -697,7 +750,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --domain, -d <DOMAIN> 指定主控外网访问域名 (可选，留空则使用纯 IP 访问)"
             echo "  --nginx               自动配置 Nginx 反向代理与 WebSocket 转发"
             echo "  --server, -s <URL>    指定主控端地址 (从节点安装时使用)"
-            echo "  --port, -p <PORT>     指定监听端口或 NAT 映射外网端口 (默认: 8080)"
+            echo "  --port, -p <PORT>     主控: 监听端口 (默认 8080); 从节点: NAT 映射端口(仅放行/记录)"
+            echo "                        节点实际监听端口由主控下发(2083/2053/8445 TCP, 8443/8444 UDP)"
             echo "  --entry <PATH>        指定主控安全入口路径 (默认: /safe_entry)"
             echo ""
             echo "性能与加速选项:"

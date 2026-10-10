@@ -1,0 +1,157 @@
+# 更新日志
+
+## v2.2.1 — 复审加固
+
+1. **部署日志不再回显节点令牌** — `service/deploy.go`
+   自动部署时会把执行的纳管命令写入部署日志（落库 + 面板展示），原来会带上完整 Token；
+   现在写入前统一脱敏为 `node_xxxxxxxxxxxx***`。
+
+2. **部署缓冲区随任务释放** — `service/deploy.go`
+   每个节点的安装输出原先常驻内存 `map`（只增不减），现改为任务结束 `defer` 释放。
+
+3. **安装脚本不再明文回显/暴露令牌** — `install.sh`
+   - 输出里的 `节点令牌` 改为 `node_xxxxxxxxxxxx***` 脱敏；
+   - 含令牌的 `config.json` 权限收紧为 `0600`；
+   - systemd 单元不再把令牌写进 world-readable 的 `ExecStart`，改为
+     `EnvironmentFile=-/etc/work-v/agent.env`（`0600`）+ `--token ${WORKV_TOKEN}`。
+
+4. **前端 SSH 密码不再留存** — `dist/index.html`
+   自动部署提交成功后立即清空内存中的 SSH 密码。
+
+## v2.2.0 — 更自动 / 更干净
+
+1. **安全入口改为宝塔风格随机路径** — `model/db.go`、`cmd/master/main.go`
+   首次启动自动生成 `/xxxxxxxxxxxxxxxx` 形态的随机入口并落库（不再使用写入公开文档的
+   `/safe_entry`，那样等于没有防护）。启动日志直接打印完整入口地址，随时可用
+   `work-v default` / `work-v-master -entry` 查询；安装脚本也会回显真实入口路径。
+   已有部署不会被改动（只影响新库）。
+
+2. **一键全自动部署节点 (SSH 纳管)** — `service/deploy.go`、`api/handlers.go`、`server.go`
+   新增 `POST /api/v1/admin/auto-deploy`：在面板"添加节点"里选「🚀 全自动部署」，
+   只要填 **服务器地址 + SSH 端口 + 用户 + 密码**，主控就会通过 SSH 登录目标机、
+   自动执行 `/install.sh` 安装 Sing-box 内核与 Agent 守护、校验服务状态并上线；
+   安装日志实时回显（`GET /api/v1/admin/auto-deploy/:id`，前端 2 秒轮询）。
+   SSH 密码仅用于本次连接，不落库、不写日志；命令拼接前会校验 Host 字符集，避免命令注入。
+   仍然保留「🖐 手动命令」模式供特殊环境使用。
+
+3. **面板移除服务器探针类显示** — `cmd/master/dist/index.html`
+   仪表盘去掉"全网实时上行/下行"，节点卡片去掉 CPU 使用率、内存占用、实时网速进度条，
+   改为只保留与 VPN 订阅管理相关的信息（节点数/在线数/订阅数/累计流量）。
+   底层心跳采集代码保持不变，需要时可再开启。
+
+4. **安装脚本** — 主控安装完成后读取主控实际生成的安全入口路径并回显（不再硬编码 `/safe_entry`）。
+
+## v2.1.2 — 部署安全加固
+
+1. **新增 `-bind` 监听地址参数** — `cmd/master/main.go`
+   默认行为不变（留空 = 监听所有网卡）。前面挂了 HTTPS 反向代理时建议：
+   `work-v-master -port 8088 -bind 127.0.0.1 -db ...`，
+   这样面板只能经反向代理（域名 + TLS）访问，避免公网明文直连端口绕过 TLS，
+   防止安全入口凭证与登录 JWT 以明文传输。启动日志会在监听非回环地址时给出提示。
+
+2. **修复 `work-v` CLI 回显的入口端口错误** — `scripts/work-v`
+   历史实现硬编码 `8080` 与 `/opt/work-v-master`，因此在自定义端口（如 8088）或自定义安装目录
+   （如 `/www/wwwroot/work-v`）的部署下会打印错误的入口地址，甚至误报"未安装"。
+   现在 CLI 会从 `/etc/systemd/system/work-v-master.service` 的 ExecStart 反推真实的
+   二进制路径、`-port` 与 `-db`，所有子命令统一走 `run_master`，回显地址与实际部署一致；
+   `work-v test` 的本地探测端口也改为实际端口。
+
+## v2.1.1 — 安全入口 (safe path) 专项修复
+
+> 由用户反馈后复现确认: 安全入口存在可绕过缺陷。
+
+1. **静态资源白名单可按后缀绕过安全入口 (严重)** — `internal/master/middleware/safe_entrance.go`、`server.go`
+   原实现用 `HasSuffix(path, ".js"/".css"/".png"...)` 放行静态资源, 于是任何以这些后缀结尾的请求都会跳过入口校验:
+   - 未授权访问 `/anything.js` 会返回**面板 HTML** (NoRoute 回落 index.html), "隐藏面板"形同虚设;
+   - `PUT/DELETE /api/v1/admin/nodes/1.js` 这类带 `:id` 的管理接口会绕过入口层直达 JWT 鉴权
+     (实测返回 401 而非 403), 凭证泄露或 CSRF 场景下可直接操作接口。
+   现在改为**严格白名单**: 启动时扫描前端产物根目录登记真实静态文件 (不含 index.html),
+   只有登记在册的文件才免检; NoRoute 对"带扩展名但不存在"的路径直接 404, 不再回落面板 HTML。
+
+2. **安全入口路径本身缺少校验** — `middleware.ValidateSafePath`
+   可被设置成 `/install.sh`、`/sub/...`、`/api/...`、`/evil.js` 等, 直接让节点安装脚本、订阅或接口不可用。
+   现在 `work-v set-entry` 与 Web 端都会校验: 保留前缀、非法字符、`..`、文件扩展名、路径长度。
+
+3. **修改安全入口会把管理员自己锁在门外** — `api.HandleSetSafeEntrance`
+   路径变更后旧 Cookie 立即失效, 而面板不会提示重新访问新入口。
+   现在修改成功后立即给当前浏览器换发与新路径匹配的凭据; 同时把入口 Cookie 改为 `HttpOnly`(前端不读取, 降低被脚本窃取的风险)。
+
+4. **`/download/` 用后缀黑名单拦敏感文件** — `server.go`
+   `work-v.db.bak`、`config.yml.bak` 这类备份文件能绕过 `.db`/`.yml` 的后缀判断, **匿名下载整个数据库**
+   (含管理员 bcrypt 哈希、节点 Token、用户 UUID)。改为"禁止子串 + 文件名字符集白名单"。
+
+新增回归测试 `internal/master/safe_entrance_test.go` (9 个用例):
+未授权必须拿到拦截页、后缀不能绕过接口、真实静态资源仍可用、持 Cookie 面板可用、
+非数字 id 被拒绝、非法入口路径被拒绝、改入口后换发新凭据且旧凭据失效、公开白名单仍可达、备份文件被拒绝。
+
+## v2.1.0 — 稳定性 / 安全性修复版
+
+本版针对一次完整代码审计发现的问题做修复，全部修复点均补了回归测试
+(`go build ./...`、`go vet ./...`、`go test ./...` 全绿)。
+
+### 严重 (会导致配置丢失、进程崩溃或功能不可用)
+
+1. **修复系统设置"改第二次就丢"** — `internal/master/model/db.go`
+   `SetSetting` 误把 `os.Getenv("TZ")` 写进 `updated_at` 时间列，导致该行之后无法被 GORM 扫描。
+   表现为域名、JWT 密钥等设置第二次修改后读取为空（Docker 环境因为显式设置 `TZ` 必现）。
+   同时新增 `repairSystemSettings`，启动时自动修复历史脏数据。
+
+2. **修复 Agent 重载配置后"内核已停止"** — `internal/agent/runner/runner.go`
+   旧进程的 watcher 协程会把新进程的运行状态改成未运行，导致面板状态错误，
+   且 `ApplyConfig` 的幂等判断永久失效（每次下发配置都重启内核、切断所有用户连接）。
+
+3. **修复主控 `send on closed channel` 崩溃** — `internal/master/hub/hub.go`
+   配置下发与节点重连撞车时会 panic 并打挂主控进程。现在发送全程持锁，无法再命中已关闭通道。
+
+4. **修复 `-domain` 命令不退出** — `cmd/master/main.go`
+   该命令会继续在前台启动 HTTP 服务：主控运行时抢端口失败以退出码 1 结束，
+   而 `work-v`/`install.sh` 都是 `set -e`，后续 systemd 改写与重启全部不执行。
+
+5. **修复 `work-v disable-entry` 重启后失效** — `cmd/master/main.go`、`model/db.go`
+   改用显式开关 `safe_entry_enabled`，不再用"路径为空"表示关闭。
+   Web 端"安全入口"接口同步修复。
+
+6. **修复订阅对未落库入站的节点返回空** — `internal/master/sub/sub.go`
+   `work-v add-node` 建的节点没有 `InboundsJSON`，订阅里一个节点都不出现（面板却显示正常）。
+   现在与面板一致，回落到默认入站配置。
+
+### 高 (计费 / 安全 / 协议)
+
+7. **节点安装脚本接口的 Host 注入** — `internal/master/server.go`
+   新增 `sanitizeHost` 严格校验，并改用 `ReplaceAllLiteralString`（原实现会把 `$1` 当捕获组）。
+
+8. **流量不再错记到第一个用户** — `internal/agent/runner/runner.go`
+   无法归属的连接/全局流量不再硬塞给 `activeUsers[0]`，避免用户被他人流量拖到超额熔断。
+
+9. **sing-box 重启后重置流量快照** — `internal/agent/runner/runner.go`
+   修复重载后累计计数器归零导致增量判断长期失效（漏计费）。
+
+10. **删除节点时主动断开长连** — `internal/master/api/handlers.go`、`hub.KickNode`
+    被删节点不会再带着最后一份配置继续为用户服务。
+
+11. **证书改为纯 Go 自签生成** — `internal/agent/runner/runner.go`
+    不再依赖 `openssl`；证书确实不可用时只跳过 Hysteria2 / TUIC / AnyTLS，
+    而不是让整份配置（含 VLESS）校验失败。修复 AnyTLS 服务端缺少证书的非法配置。
+
+12. **`install.sh --entry` 真正生效** — 之前只解析不写入，用户以为改了安全入口其实没有。
+
+### 其他
+
+- 节点 Token 日志脱敏；配置文件 `sing-box.json` 权限收紧为 `0600`。
+- 登录 Cookie 增加 `SameSite=Lax`，HTTPS 反代场景自动带 `Secure`。
+- 登录失败限流表增加过期清理，避免被大量源 IP 撑爆内存。
+- 配置下发新增 `config_ack` 回执，主控日志可看到节点是否真正应用成功。
+- Agent 上报的版本号改为真实版本（此前是 Go 运行时版本）；`uptime` 改为系统开机时长。
+- Agent 所有 WebSocket 写操作串行化（此前配置回执与心跳并发写会触发 gorilla 的并发写限制）。
+- `-add-node`/`-entry` 在纯 IP 模式下打印可用的内网地址，不再硬编码 `127.0.0.1`。
+- `-set-password` 不再回显明文；`-set-password`/`-reset-admin` 增加"管理员记录不存在"的失败提示。
+- 安装脚本 `read_input` 改用 `printf -v`，消除 `eval` 注入面；节点安装时自动放行协议所需端口。
+- NAT 机器上 `--port` 的行为改为如实说明（仅防火墙放行/记录，节点监听端口由主控下发）。
+
+### 已知限制 (本版未改动)
+
+- 节点安装脚本与 agent 二进制仍通过明文 HTTP 分发，`--token` 出现在命令行与 systemd unit 中，
+  建议尽快部署 HTTPS 反代。
+- 主控"一键升级 sing-box"仍未做哈希/签名校验。
+- API 仍无 CSRF token（已依赖 `SameSite=Lax` 与 Bearer 头）。
+- SQLite 连接池仍为单连接（`SetMaxOpenConns(1)`），高写入场景会是瓶颈。

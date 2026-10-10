@@ -24,7 +24,8 @@ RUN apk add --no-cache ca-certificates tzdata curl bash \
 COPY --from=builder /build/work-v-master /app/work-v-master
 COPY --from=builder /build/work-v-agent /app/work-v-agent
 
-# 数据持久化目录
+# 数据持久化目录 (显式创建, 便于挂载卷时属主/权限正确)
+RUN mkdir -p /app/data
 VOLUME /app/data
 
 EXPOSE 8080

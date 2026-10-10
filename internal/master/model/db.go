@@ -2,15 +2,18 @@ package model
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/glebarez/sqlite"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -54,8 +57,14 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	DB = db
 
+	// 修复历史版本写坏的时间列 (必须在任何读取之前执行)
+	repairSystemSettings(db)
+
 	// 检查并初始化系统核心安全密钥 (JWT 密钥、安全入口动态 Salt 等)
 	initSystemSecrets(db)
+
+	// 初始化安全入口路径 (宝塔风格: 首次启动生成随机入口)
+	initSafeEntry(db)
 
 	// 检查是否需要初始化默认管理员
 	initDefaultAdmin(db)
@@ -75,16 +84,56 @@ func GetSetting(key, defaultVal string) string {
 	return defaultVal
 }
 
-// SetSetting 保存或更新系统设置
+// SetSetting 保存或更新系统设置 (原子 upsert, 避免读改写竞态)
+// 注意: 这里必须写 time.Now()。历史实现误写成 os.Getenv("TZ"), 会把时区字符串塞进
+// updated_at 时间列, 导致该行之后再也无法被 GORM 扫描 (unsupported Scan ... *time.Time),
+// 读取时静默回落到默认值 (域名/JWT 密钥等设置"改第二次就丢")。
 func SetSetting(key, val string) error {
 	if DB == nil {
 		return fmt.Errorf("db not initialized")
 	}
-	var s SystemSetting
-	if err := DB.Where("key = ?", key).First(&s).Error; err == nil {
-		return DB.Model(&s).Updates(map[string]any{"value": val, "updated_at": time.Now()}).Error
+	now := time.Now()
+	return DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.Assignments(map[string]any{"value": val, "updated_at": now}),
+	}).Create(&SystemSetting{Key: key, Value: val, UpdatedAt: now}).Error
+}
+
+// repairSystemSettings 修复历史版本缺陷造成的 updated_at 脏数据。
+func repairSystemSettings(db *gorm.DB) {
+	res := db.Exec(
+		"UPDATE system_settings SET updated_at = ? WHERE updated_at IS NULL OR length(updated_at) < 19 OR updated_at NOT LIKE '____-__-__%'",
+		time.Now(),
+	)
+	if res.Error != nil {
+		log.Printf("[Work-V] 修复 system_settings 时间列失败: %v", res.Error)
+		return
 	}
-	return DB.Create(&SystemSetting{Key: key, Value: val}).Error
+	if res.RowsAffected > 0 {
+		log.Printf("[Work-V] 已修复 %d 条被污染的系统设置记录 (updated_at)", res.RowsAffected)
+	}
+}
+
+// DefaultSafePath 默认安全入口路径
+const DefaultSafePath = "/safe_entry"
+
+// GetSafeEntryConfig 读取安全入口配置。
+// 不能用 "safe_path 为空" 表示"已关闭"——重启后会被默认值重新打开 (历史缺陷),
+// 因此引入显式开关 safe_entry_enabled ("1"/"0")。
+func GetSafeEntryConfig() (enabled bool, path string) {
+	if DB != nil {
+		var s SystemSetting
+		if err := DB.Where("key = ?", "safe_path").First(&s).Error; err == nil {
+			path = strings.TrimSpace(s.Value)
+		}
+		if GetSetting("safe_entry_enabled", "1") == "0" {
+			return false, path
+		}
+	}
+	if path == "" || path == "/" {
+		path = DefaultSafePath
+	}
+	return true, path
 }
 
 func initSystemSecrets(db *gorm.DB) {
@@ -105,6 +154,27 @@ func initSystemSecrets(db *gorm.DB) {
 		newSalt := fmt.Sprintf("%x", buf)
 		db.Save(&SystemSetting{Key: "entrance_salt", Value: newSalt, UpdatedAt: time.Now()})
 	}
+}
+
+// initSafeEntry 宝塔风格安全入口: 首次启动生成随机路径并落库。
+// 历史默认值 /safe_entry 写在公开文档里, 等于没有防护, 因此改为随机入口,
+// 管理入口地址通过 "work-v default" / "work-v-master -entry" 查询。
+func initSafeEntry(db *gorm.DB) {
+	var s SystemSetting
+	if err := db.Where("key = ?", "safe_path").First(&s).Error; err == nil && strings.TrimSpace(s.Value) != "" {
+		return
+	}
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		log.Printf("[Work-V] 生成安全入口随机路径失败: %v", err)
+		return
+	}
+	newPath := "/" + hex.EncodeToString(buf)
+	if err := db.Save(&SystemSetting{Key: "safe_path", Value: newPath, UpdatedAt: time.Now()}).Error; err != nil {
+		log.Printf("[Work-V] 保存安全入口路径失败: %v", err)
+		return
+	}
+	log.Printf("[Work-V 安全防护] 已生成随机安全入口路径: %s (用 work-v default 查看完整地址)", newPath)
 }
 
 func initDefaultAdmin(db *gorm.DB) {

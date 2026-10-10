@@ -1,13 +1,13 @@
 package collector
 
 import (
-	"runtime"
 	"sync"
 	"time"
 
 	"work-v/internal/common"
 
 	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 )
@@ -74,6 +74,12 @@ func (c *SystemCollector) CollectStats(singboxPid int, singboxRunning bool) comm
 		sbStatus = "running"
 	}
 
+	// UptimeSec 字段语义是"系统运行时间"; 取不到时退回 Agent 自身运行时长
+	uptimeSec := uint64(time.Since(c.startTime).Seconds())
+	if up, err := host.Uptime(); err == nil {
+		uptimeSec = up
+	}
+
 	return common.NodeHardwareStats{
 		CPUPercent:    cpuPercent,
 		MemUsedBytes:  memUsed,
@@ -82,7 +88,8 @@ func (c *SystemCollector) CollectStats(singboxPid int, singboxRunning bool) comm
 		NetTxRate:     txRate,
 		SingboxStatus: sbStatus,
 		SingboxPid:    singboxPid,
-		UptimeSec:     uint64(time.Since(c.startTime).Seconds()),
-		Version:       runtime.Version(),
+		UptimeSec:     uptimeSec,
+		// 历史实现上报的是 Go 运行时版本, 面板"Agent 版本"完全没有意义
+		Version: common.Version,
 	}
 }

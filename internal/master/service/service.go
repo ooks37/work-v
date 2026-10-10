@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strings"
 	"time"
 
 	"work-v/internal/common"
@@ -41,6 +42,28 @@ func GenerateShortID() string {
 	bytes := make([]byte, 4)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// EnsureAllNodesInbounds 启动期补齐历史节点的入站配置。
+//
+// 背景: 订阅接口已改为纯读 (避免并发请求各自生成 Reality 密钥互相覆盖,
+// 导致用户拿到的 pbk 与节点实际密钥永久不匹配), 因此入站必须在建节点时就落库。
+// 这里对历史数据做一次性补齐 —— 启动期单写入者, 不存在竞态。
+func EnsureAllNodesInbounds() {
+	var nodes []model.Node
+	if err := model.DB.Find(&nodes).Error; err != nil {
+		return
+	}
+	fixed := 0
+	for i := range nodes {
+		if strings.TrimSpace(nodes[i].InboundsJSON) == "" {
+			GetOrCreateDefaultInbounds(&nodes[i])
+			fixed++
+		}
+	}
+	if fixed > 0 {
+		log.Printf("[Work-V] 已为 %d 个历史节点补齐入站配置 (Reality 密钥一次性生成并落库)", fixed)
+	}
 }
 
 // GetOrCreateDefaultInbounds 为节点生成默认开箱即用的 Inbounds (默认 VLESS-Reality 免证书)
@@ -163,12 +186,12 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 
 // ProtocolShareLink 单个协议的客户端直连链接与元数据
 type ProtocolShareLink struct {
-	Protocol    string `json:"protocol"`     // 协议标识
-	Name        string `json:"name"`         // 节点显示名
-	Port        int    `json:"port"`         // 监听端口
-	PortType    string `json:"port_type"`    // TCP / UDP
-	Link        string `json:"link"`         // 完整客户端导入链接 (vless://, hysteria2://, tuic:// 等)
-	Description string `json:"description"`  // 协议特性说明
+	Protocol    string `json:"protocol"`    // 协议标识
+	Name        string `json:"name"`        // 节点显示名
+	Port        int    `json:"port"`        // 监听端口
+	PortType    string `json:"port_type"`   // TCP / UDP
+	Link        string `json:"link"`        // 完整客户端导入链接 (vless://, hysteria2://, tuic:// 等)
+	Description string `json:"description"` // 协议特性说明
 }
 
 // GenerateNodeShareLinks 为指定节点与用户生成所有已启用协议的分享链接
@@ -428,7 +451,26 @@ func RecordTraffic(nodeID uint, users []common.UserDeltaTraffic) {
 			model.DB.Model(&u).Update("status", "suspended")
 			log.Printf("[Quota] 用户 %s 流量超标 (已用: %d / 上限: %d)，触发全网秒级熔断!", u.Username, u.UsedTraffic, u.TrafficLimit)
 			hub.GlobalHub.BroadcastCutoffUser(u.UUID)
+			pushConfigToAllNodes("流量超标")
 		}
+	}
+}
+
+// pushConfigToAllNodes 重新下发全网配置。
+//
+// 熔断只踢掉现有连接是不够的: 内核里的用户凭据(配置)没变, 客户端断开后用同一凭据
+// 立刻就能重连继续用。必须让内核重载"不含该用户"的配置, 熔断才真正生效。
+func pushConfigToAllNodes(reason string) {
+	var nodes []model.Node
+	if err := model.DB.Find(&nodes).Error; err != nil {
+		return
+	}
+	for i := range nodes {
+		nodeID := nodes[i].ID
+		go hub.GlobalHub.PushConfigToNode(nodeID)
+	}
+	if len(nodes) > 0 {
+		log.Printf("[Quota] 已向 %d 个节点重新下发配置 (%s), 确保被熔断用户的内核凭据同步失效", len(nodes), reason)
 	}
 }
 
@@ -445,6 +487,7 @@ func StartQuotaWatchdog() {
 				model.DB.Model(&u).Update("status", "expired")
 				log.Printf("[Quota] 用户 %s 已过期，执行全网下线广播", u.Username)
 				hub.GlobalHub.BroadcastCutoffUser(u.UUID)
+				pushConfigToAllNodes("已过期")
 			}
 
 			// 同步离线节点状态
