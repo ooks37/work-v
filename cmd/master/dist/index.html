@@ -555,8 +555,12 @@
                     {{ getUserStatusText(user) }}
                   </span>
                 </div>
-                <div class="text-xs text-[#86868b] font-mono truncate" :title="user.uuid">
-                  UUID: {{ user.uuid }}
+                <div class="flex items-center gap-2.5 text-xs text-[#86868b] font-mono flex-wrap">
+                  <span class="truncate" :title="user.uuid">UUID: {{ user.uuid }}</span>
+                  <span class="inline-flex items-center gap-1.5 bg-[#f2f2f7] px-2.5 py-0.5 rounded-full text-[#1d1d1f]">
+                    🔑 凭证密码: <strong class="select-all text-[#0071e3]">{{ user.password || '自动' }}</strong>
+                    <button @click="copyText(user.password)" class="text-[#0071e3] hover:underline text-[11px] ml-0.5 font-medium">复制</button>
+                  </span>
                 </div>
 
                 <!-- 流量用量 iOS 细线进度条 -->
@@ -725,17 +729,38 @@
         </div>
 
         <div class="space-y-4 text-xs">
+          <!-- 账号专属凭证说明卡片 -->
+          <div class="p-3.5 rounded-2xl bg-white border border-black/[0.08] shadow-sm space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-semibold text-[#86868b]">🔒 账号专属凭据 (必须携带凭证方可订阅)</span>
+              <span class="text-[10px] bg-[#34c759]/10 text-[#34c759] font-medium px-2 py-0.5 rounded-full">未授权访问拦截 401</span>
+            </div>
+            <div class="flex items-center justify-between bg-[#f2f2f7] p-2.5 rounded-xl text-xs font-mono">
+              <div class="space-x-3 truncate">
+                <span>账号: <strong class="text-[#1d1d1f]">{{ selectedUserForSub.username }}</strong></span>
+                <span>凭据密码: <strong class="text-[#0071e3]">{{ selectedUserForSub.password }}</strong></span>
+              </div>
+              <button @click="copyText(`${selectedUserForSub.username}:${selectedUserForSub.password}`)" class="text-[#0071e3] text-xs font-medium hover:underline shrink-0">
+                复制凭证
+              </button>
+            </div>
+            <p class="text-[10px] text-[#86868b]">客户端拉取或网页解锁均需校验此密码，杜绝任何未授权裸奔访问。</p>
+          </div>
+
           <!-- 通用自适应聚合订阅 -->
           <div class="p-4 rounded-2xl bg-[#f2f2f7] border border-black/[0.06] space-y-3">
-            <div class="text-[#86868b] font-medium">通用自适应聚合订阅 (推荐)</div>
+            <div class="flex items-center justify-between">
+              <span class="text-[#86868b] font-medium">通用自适应聚合订阅 (推荐)</span>
+              <span class="text-[10px] text-[#0071e3] font-medium">已内嵌安全凭据参数</span>
+            </div>
             <div class="p-2.5 bg-white rounded-xl border border-black/10 font-mono text-[11px] text-[#1d1d1f] truncate select-all">
-              {{ getSubURL(selectedUserForSub.sub_token) }}
+              {{ getSubURL(selectedUserForSub) }}
             </div>
             <div class="flex items-center gap-2">
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token))" class="flex-1 py-2 rounded-full bg-[#0071e3] text-white font-medium text-xs apple-spring apple-press shadow-sm">
+              <button @click="copyText(getSubURL(selectedUserForSub))" class="flex-1 py-2 rounded-full bg-[#0071e3] text-white font-medium text-xs apple-spring apple-press shadow-sm">
                 复制通用订阅链接
               </button>
-              <button @click="openQr(getSubURL(selectedUserForSub.sub_token), '通用订阅二维码')" class="px-4 py-2 rounded-full bg-white text-[#1d1d1f] font-medium text-xs apple-press border border-black/10 shadow-sm">
+              <button @click="openQr(getSubURL(selectedUserForSub), '通用订阅二维码')" class="px-4 py-2 rounded-full bg-white text-[#1d1d1f] font-medium text-xs apple-press border border-black/10 shadow-sm">
                 二维码
               </button>
             </div>
@@ -745,25 +770,25 @@
           <div class="grid grid-cols-2 gap-2">
             <div class="p-3 rounded-xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
               <div class="font-medium text-[#1d1d1f]">Clash / Mihomo</div>
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'clash'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
+              <button @click="copyText(getSubURL(selectedUserForSub, 'clash'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
                 复制 Clash 链接
               </button>
             </div>
             <div class="p-3 rounded-xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
               <div class="font-medium text-[#1d1d1f]">Sing-box JSON</div>
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'singbox'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
+              <button @click="copyText(getSubURL(selectedUserForSub, 'singbox'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
                 复制 Singbox 配置
               </button>
             </div>
             <div class="p-3 rounded-xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
               <div class="font-medium text-[#1d1d1f]">Base64 通用节点池</div>
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'base64'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
+              <button @click="copyText(getSubURL(selectedUserForSub, 'base64'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
                 复制 Base64 订阅
               </button>
             </div>
             <div class="p-3 rounded-xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
               <div class="font-medium text-[#1d1d1f]">Shadowrocket / 小火箭</div>
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
+              <button @click="copyText(getSubURL(selectedUserForSub))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
                 一键导入小火箭
               </button>
             </div>
@@ -1039,6 +1064,10 @@
             <label class="block text-[#86868b] mb-1 font-medium">用户名</label>
             <input v-model="userForm.username" required placeholder="如: user01" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
           </div>
+          <div>
+            <label class="block text-[#86868b] mb-1 font-medium">账号凭据密码 (可选)</label>
+            <input v-model="userForm.password" placeholder="留空自动分配 8 位安全随机密码" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
+          </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-[#86868b] mb-1 font-medium">流量配额 (GB)</label>
@@ -1211,6 +1240,13 @@
             <label class="block text-[#86868b] mb-1 font-medium">用户名</label>
             <input v-model="editUserModal.form.username" required class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
           </div>
+          <div>
+            <label class="block text-[#86868b] mb-1 font-medium">账号专属凭据密码</label>
+            <div class="flex gap-2">
+              <input v-model="editUserModal.form.password" placeholder="修改凭据密码" class="flex-1 px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
+              <button type="button" @click="editUserModal.form.password = Math.random().toString(36).substring(2, 10)" class="px-3.5 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] text-xs font-medium hover:bg-[#f2f2f7] apple-press">🎲 随机</button>
+            </div>
+          </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-[#86868b] mb-1 font-medium">流量配额 (GB)</label>
@@ -1328,10 +1364,10 @@
         const shareModal = reactive({ show: false, node: null, links: [] });
         const nodeLogsModal = reactive({ show: false, node: null, logs: [] });
         const editNodeModal = reactive({ show: false, node: null, form: { name: '', address: '', rate: 1.0, hidden: false } });
-        const editUserModal = reactive({ show: false, user: null, form: { username: '', traffic_limit_gb: 100, status: 'active', expire_at: 0 } });
+        const editUserModal = reactive({ show: false, user: null, form: { username: '', password: '', traffic_limit_gb: 100, status: 'active', expire_at: 0 } });
 
         const nodeForm = reactive({ name: '', address: '', rate: 1.0, preset: 'global', hidden: false, enabled_protocols: ['vless-ws', 'vless'] });
-        const userForm = reactive({ username: '', traffic_limit_gb: 100, expire_days: 30 });
+        const userForm = reactive({ username: '', password: '', traffic_limit_gb: 100, expire_days: 30 });
         const batchForm = reactive({ prefix: 'vip', count: 5, traffic_limit_gb: 100, expire_days: 30 });
         const passForm = reactive({ old_password: '', new_password: '' });
         const settingsForm = reactive({ master_domain: '' });
@@ -1777,6 +1813,7 @@
             showAddUserModal.value = false;
             addToast(`用户【${userForm.username}】已创建`);
             userForm.username = '';
+            userForm.password = '';
             fetchData();
           } catch (err) {
             addToast(err.message, 'error');
@@ -1832,6 +1869,7 @@
         const openEditUserModal = (user) => {
           editUserModal.user = user;
           editUserModal.form.username = user.username;
+          editUserModal.form.password = user.password || '';
           editUserModal.form.traffic_limit_gb = user.traffic_limit ? Math.round(user.traffic_limit / (1024*1024*1024)) : 0;
           editUserModal.form.status = user.status || 'active';
           editUserModal.form.expire_at = user.expire_at || 0;
@@ -1864,10 +1902,16 @@
           selectedUserForSub.value = user;
         };
 
-        const getSubURL = (subToken, type) => {
+        const getSubURL = (user, type) => {
+          if (!user) return '';
           const origin = window.location.origin;
-          let url = `${origin}/sub/${subToken}`;
-          if (type) url += `?type=${type}`;
+          const token = typeof user === 'string' ? user : (user.sub_token || '');
+          const pwd = (typeof user === 'object' && user.password) ? user.password : '';
+          let url = `${origin}/sub/${token}`;
+          const params = [];
+          if (type) params.push(`type=${type}`);
+          if (pwd) params.push(`pwd=${encodeURIComponent(pwd)}`);
+          if (params.length > 0) url += `?${params.join('&')}`;
           return url;
         };
 

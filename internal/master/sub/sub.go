@@ -1,6 +1,7 @@
 package sub
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -107,18 +108,126 @@ func protoMatches(in common.InboundConfig, filter string) bool {
 	}
 }
 
-// HandleSubscription 处理多端自适应订阅主入口
+// calcSubAuthCookie 计算订阅访问鉴权 Cookie 签名
+func calcSubAuthCookie(user *model.User) string {
+	raw := fmt.Sprintf("%s:%s:%s", user.SubToken, user.Password, user.UUID)
+	h := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(h[:])
+}
+
+// checkSubscriptionAuth 校验订阅专属凭据
+// 验证来源:
+// 1. HTTP Basic Auth (p == user.Password || p == user.UUID)
+// 2. URL 查询参数 (?pwd= 或 ?password=)
+// 3. POST 表单参数 (password 或 pwd)
+// 4. 浏览器 Cookie (workv_sub_auth)
+func checkSubscriptionAuth(c *gin.Context, user *model.User) (isAuth bool, hasError bool) {
+	// 登出参数: 清除 Cookie 并返回未认证
+	if c.Query("logout") == "1" {
+		c.SetCookie("workv_sub_auth", "", -1, "/", "", false, true)
+		return false, false
+	}
+
+	validPasswords := make(map[string]bool)
+	if strings.TrimSpace(user.Password) != "" {
+		validPasswords[strings.TrimSpace(user.Password)] = true
+	}
+	if strings.TrimSpace(user.UUID) != "" {
+		validPasswords[strings.TrimSpace(user.UUID)] = true
+	}
+
+	// 1. 检查 HTTP Basic Auth
+	if u, p, ok := c.Request.BasicAuth(); ok {
+		p = strings.TrimSpace(p)
+		if validPasswords[p] && (u == "" || u == user.Username || u == user.SubToken || u == "work-v") {
+			return true, false
+		}
+	}
+
+	// 2. 检查 Query 参数 (?pwd= 或 ?password=)
+	queryPwd := strings.TrimSpace(c.DefaultQuery("pwd", c.Query("password")))
+	if queryPwd != "" {
+		if validPasswords[queryPwd] {
+			return true, false
+		}
+		return false, true
+	}
+
+	// 3. 检查 POST 表单参数
+	formPwd := strings.TrimSpace(c.DefaultPostForm("password", c.PostForm("pwd")))
+	if formPwd != "" {
+		if validPasswords[formPwd] {
+			return true, false
+		}
+		return false, true
+	}
+
+	// 4. 检查浏览器 Cookie
+	expectedCookie := calcSubAuthCookie(user)
+	if cookieVal, err := c.Cookie("workv_sub_auth"); err == nil && cookieVal != "" {
+		if cookieVal == expectedCookie {
+			return true, false
+		}
+	}
+
+	return false, false
+}
+
+// HandleSubscription 处理多端自适应订阅主入口 (含严格账号凭据安全鉴权)
 func HandleSubscription(c *gin.Context) {
 	token := c.Param("token")
 	if token == "" {
-		c.String(http.StatusBadRequest, "Invalid subscription token")
-		return
+		token = c.Query("token")
 	}
 
 	var user model.User
-	if err := model.DB.Where("sub_token = ?", token).First(&user).Error; err != nil {
-		c.String(http.StatusNotFound, "Subscription not found")
+	if token != "" {
+		if err := model.DB.Where("sub_token = ?", token).First(&user).Error; err != nil {
+			c.String(http.StatusNotFound, "Subscription not found")
+			return
+		}
+	} else {
+		// 支持通过 Basic Auth 用户名反查
+		if u, _, ok := c.Request.BasicAuth(); ok && u != "" {
+			if err := model.DB.Where("username = ? OR sub_token = ?", u, u).First(&user).Error; err != nil {
+				c.Header("WWW-Authenticate", `Basic realm="Work-V Subscription"`)
+				c.String(http.StatusUnauthorized, "Unauthorized: User not found")
+				return
+			}
+		} else {
+			c.Header("WWW-Authenticate", `Basic realm="Work-V Subscription"`)
+			c.String(http.StatusUnauthorized, "Unauthorized: Subscription token or user credentials required")
+			return
+		}
+	}
+
+	// 获取客户端类型
+	ua := strings.ToLower(c.GetHeader("User-Agent"))
+	subType := strings.ToLower(c.Query("type"))
+	accept := strings.ToLower(c.GetHeader("Accept"))
+
+	// 浏览器直接访问展示用户自服务门户页面
+	isBrowser := subType == "" && (strings.Contains(accept, "text/html") || strings.Contains(ua, "mozilla")) &&
+		!strings.Contains(ua, "curl") && !strings.Contains(ua, "wget") && !strings.Contains(ua, "clash") &&
+		!strings.Contains(ua, "sing-box") && !strings.Contains(ua, "shadowrocket") && !strings.Contains(ua, "v2ray") &&
+		!strings.Contains(ua, "surge") && !strings.Contains(ua, "loon")
+
+	// 账号凭据严格鉴权 (必须有账号凭据才可以订阅)
+	isAuth, hasError := checkSubscriptionAuth(c, &user)
+	if !isAuth {
+		if isBrowser {
+			renderLockPortal(c, &user, hasError)
+			return
+		}
+		// 客户端请求拒绝裸奔，必须返回 401 并索要 Basic Auth
+		c.Header("WWW-Authenticate", `Basic realm="Work-V Subscription"`)
+		c.String(http.StatusUnauthorized, "401 Unauthorized: Subscription credentials required (HTTP Basic Auth or ?pwd=)\n")
 		return
+	}
+
+	// 鉴权通过：若为网页请求，写入免登录 Cookie (30天有效)
+	if isBrowser {
+		c.SetCookie("workv_sub_auth", calcSubAuthCookie(&user), 86400*30, "/", "", false, true)
 	}
 
 	// 注入客户端标准流量信息头 (Clash / Shadowrocket 支持直显配额进度条)
@@ -137,16 +246,6 @@ func HandleSubscription(c *gin.Context) {
 	var nodes []model.Node
 	model.DB.Where("hidden = ?", false).Find(&nodes)
 
-	// 获取客户端类型
-	ua := strings.ToLower(c.GetHeader("User-Agent"))
-	subType := strings.ToLower(c.Query("type"))
-	accept := strings.ToLower(c.GetHeader("Accept"))
-
-	// 浏览器直接访问展示用户自服务门户页面
-	isBrowser := subType == "" && (strings.Contains(accept, "text/html") || strings.Contains(ua, "mozilla")) &&
-		!strings.Contains(ua, "curl") && !strings.Contains(ua, "wget") && !strings.Contains(ua, "clash") &&
-		!strings.Contains(ua, "sing-box") && !strings.Contains(ua, "shadowrocket") && !strings.Contains(ua, "v2ray") &&
-		!strings.Contains(ua, "surge") && !strings.Contains(ua, "loon")
 	if isBrowser {
 		renderUserPortal(c, &user, nodes)
 		return
@@ -972,7 +1071,65 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// renderUserPortal 渲染面向普通订阅客户的自适应自服务面板
+// renderLockPortal 渲染纯白苹果风格的订阅密码凭证解锁界面
+func renderLockPortal(c *gin.Context, user *model.User, hasError bool) {
+	errorAlertHTML := ""
+	if hasError {
+		errorAlertHTML = `
+      <div style="background:#fff1f2;border:1px solid #fecdd3;color:#e11d48;padding:10px 14px;border-radius:14px;font-size:12px;font-weight:500;margin-bottom:18px;display:flex;align-items:center;justify-content:center;gap:6px;">
+        <span>⚠️ 凭据密码不正确，请核对后重试</span>
+      </div>`
+	}
+
+	safeUsername := html.EscapeString(user.Username)
+	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>订阅凭证解锁 - Work-V</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, sans-serif; }
+    body { background: #f5f5f7; color: #1d1d1f; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .card { background: #ffffff; border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 24px; max-width: 420px; width: 100%%; padding: 36px 32px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.04); text-align: center; }
+    .icon-box { width: 56px; height: 56px; border-radius: 18px; background: #f2f2f7; display: inline-flex; align-items: center; justify-content: center; font-size: 26px; margin-bottom: 16px; border: 1px solid rgba(0, 0, 0, 0.04); }
+    .title { font-size: 20px; font-weight: 700; color: #1d1d1f; letter-spacing: -0.02em; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: #86868b; line-height: 1.5; margin-bottom: 24px; }
+    .user-pill { display: inline-block; background: #f2f2f7; color: #1d1d1f; padding: 2px 8px; border-radius: 6px; font-weight: 600; font-family: monospace; }
+    .input { width: 100%%; background: #f2f2f7; border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 14px; padding: 12px 16px; font-size: 14px; color: #1d1d1f; outline: none; transition: all 0.2s; font-family: monospace; margin-bottom: 14px; text-align: center; letter-spacing: 2px; }
+    .input:focus { border-color: #0071e3; background: #ffffff; box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15); }
+    .btn { width: 100%%; background: #0071e3; color: #ffffff; border: none; border-radius: 14px; padding: 12px 16px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 8px rgba(0, 113, 227, 0.25); }
+    .btn:hover { background: #0077ed; }
+    .btn:active { transform: scale(0.98); }
+    .footer { margin-top: 24px; font-size: 11px; color: #86868b; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-box">🔐</div>
+    <h2 class="title">订阅凭证安全解锁</h2>
+    <p class="subtitle">账户 <span class="user-pill">%s</span> 已启用凭据保护<br>请输入专属订阅密码以解锁节点配置</p>
+
+    %s
+
+    <form method="POST" action="">
+      <input type="password" name="password" placeholder="请输入凭据密码..." required autofocus class="input">
+      <button type="submit" class="btn">解锁订阅与节点</button>
+    </form>
+
+    <div class="footer">
+      💡 此订阅受访问权限保护，未授权客户端将拒绝接入。<br>
+      如遗忘凭据密码，请联系管理员在控制台查看或重置。
+    </div>
+  </div>
+</body>
+</html>`, safeUsername, errorAlertHTML)
+
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, htmlContent)
+}
+
+// renderUserPortal 渲染面向普通订阅客户的自适应自服务面板 (Apple Light 纯白风格)
 func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 	scheme := "http"
 	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
@@ -984,6 +1141,10 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 		host = d
 	}
 	subBase := fmt.Sprintf("%s://%s/sub/%s", scheme, host, user.SubToken)
+	subWithPwd := subBase
+	if user.Password != "" {
+		subWithPwd = fmt.Sprintf("%s?pwd=%s", subBase, url.QueryEscape(user.Password))
+	}
 
 	usedStr := formatBytes(user.UsedTraffic)
 	limitStr := "不限流量"
@@ -1001,18 +1162,25 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 		expireStr = time.Unix(user.ExpireAt, 0).Format("2006-01-02")
 	}
 
-	statusBadge := `<span style="background:rgba(16,185,129,0.2);color:#34d399;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🟢 活跃正常</span>`
+	statusBadge := `<span style="background:rgba(52,199,89,0.12);color:#34c759;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🟢 活跃正常</span>`
 	if user.Status == "suspended" {
-		statusBadge = `<span style="background:rgba(239,68,68,0.2);color:#f87171;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🔴 流量熔断</span>`
+		statusBadge = `<span style="background:rgba(255,59,48,0.12);color:#ff3b30;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🔴 流量熔断</span>`
 	} else if user.Status == "expired" {
-		statusBadge = `<span style="background:rgba(245,158,11,0.2);color:#fbbf24;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🟡 账号已过期</span>`
+		statusBadge = `<span style="background:rgba(255,149,0,0.12);color:#ff9500;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🟡 账号已过期</span>`
 	}
 
-	clashURL := fmt.Sprintf("clash://install-config?url=%s&name=%s", url.QueryEscape(subBase+"?type=clash"), url.QueryEscape("Work-V-"+user.Username))
-	singboxURL := fmt.Sprintf("sing-box://import-remote-profile?url=%s#%s", url.QueryEscape(subBase+"?type=sing-box"), url.QueryEscape("Work-V-"+user.Username))
-	srURL := "sub://" + base64.URLEncoding.EncodeToString([]byte(subBase))
+	clashTargetURL := subBase + "?type=clash"
+	singboxTargetURL := subBase + "?type=sing-box"
+	if user.Password != "" {
+		clashTargetURL += "&pwd=" + url.QueryEscape(user.Password)
+		singboxTargetURL += "&pwd=" + url.QueryEscape(user.Password)
+	}
 
-	// 组装各节点的单个独立直连协议链接与二维码
+	clashURL := fmt.Sprintf("clash://install-config?url=%s&name=%s", url.QueryEscape(clashTargetURL), url.QueryEscape("Work-V-"+user.Username))
+	singboxURL := fmt.Sprintf("sing-box://import-remote-profile?url=%s#%s", url.QueryEscape(singboxTargetURL), url.QueryEscape("Work-V-"+user.Username))
+	srURL := "sub://" + base64.URLEncoding.EncodeToString([]byte(subWithPwd))
+
+	// 组装各节点的单个独立直连协议链接与二维码 (Apple Light 质感)
 	var nodeCardsHTML strings.Builder
 	totalSingleLinks := 0
 	for _, n := range nodes {
@@ -1026,30 +1194,32 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 		for idx, sl := range sLinks {
 			totalSingleLinks++
 			qrID := fmt.Sprintf("qr-%d-%d", n.ID, idx)
-			badgeColor := "#38bdf8"
+			badgeColor := "#0071e3"
 			if strings.Contains(strings.ToLower(sl.Protocol), "hy") || strings.Contains(strings.ToLower(sl.Protocol), "tuic") {
-				badgeColor = "#a855f7"
+				badgeColor = "#af52de"
+			} else if strings.Contains(strings.ToLower(sl.Protocol), "ss") {
+				badgeColor = "#ff9500"
 			}
 			qrTarget := url.QueryEscape(sl.Link)
 			safeLink := html.EscapeString(sl.Link)
 			nodeCardsHTML.WriteString(fmt.Sprintf(`
-      <div class="single-node-card" data-proto="%s" style="background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:12px 14px;margin-bottom:10px;">
+      <div class="single-node-card" data-proto="%s" style="background:#ffffff;border:1px solid rgba(0,0,0,0.06);border-radius:16px;padding:14px 16px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
           <div style="flex:1;min-width:180px;">
             <div style="display:flex;align-items:center;gap:6px;">
-              <span style="font-size:13px;font-weight:700;color:#f8fafc;">%s</span>
-              <span style="background:%s20;color:%s;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:600;">%s</span>
+              <span style="font-size:13px;font-weight:600;color:#1d1d1f;">%s</span>
+              <span style="background:%s15;color:%s;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;">%s</span>
             </div>
-            <div style="font-size:11px;color:#64748b;margin-top:2px;">%s · 端口: %d (%s)</div>
+            <div style="font-size:11px;color:#86868b;margin-top:2px;">%s · 端口: %d (%s)</div>
           </div>
           <div style="display:flex;gap:6px;">
-            <button onclick="copyText('%s')" style="background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);padding:6px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">📋 复制单链接</button>
-            <button onclick="toggleQR('%s')" style="background:rgba(168,85,247,0.15);color:#c084fc;border:1px solid rgba(168,85,247,0.3);padding:6px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">📱 单节点码</button>
+            <button onclick="copyText('%s')" style="background:rgba(0,113,227,0.08);color:#0071e3;border:1px solid rgba(0,113,227,0.2);padding:6px 12px;border-radius:999px;font-size:11px;cursor:pointer;font-weight:600;">📋 复制单链接</button>
+            <button onclick="toggleQR('%s')" style="background:rgba(175,82,222,0.08);color:#af52de;border:1px solid rgba(175,82,222,0.2);padding:6px 12px;border-radius:999px;font-size:11px;cursor:pointer;font-weight:600;">📱 单节点码</button>
           </div>
         </div>
-        <div id="%s" style="display:none;text-align:center;margin-top:12px;padding-top:12px;border-top:1px dashed rgba(255,255,255,0.08);">
-          <img src="/api/v1/qrcode?text=%s" style="width:130px;height:130px;background:white;padding:6px;border-radius:8px;display:inline-block;" alt="Node QR">
-          <div style="font-size:10px;color:#94a3b8;margin-top:4px;">客户端扫码直接接入该节点</div>
+        <div id="%s" style="display:none;text-align:center;margin-top:12px;padding-top:12px;border-top:1px dashed rgba(0,0,0,0.08);">
+          <img src="/api/v1/qrcode?text=%s" style="width:130px;height:130px;background:white;padding:6px;border-radius:10px;border:1px solid rgba(0,0,0,0.08);display:inline-block;" alt="Node QR">
+          <div style="font-size:10px;color:#86868b;margin-top:4px;">客户端扫码直接接入该节点</div>
         </div>
       </div>`,
 				strings.ToLower(sl.Protocol),
@@ -1063,50 +1233,52 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 	nodesSectionHTML := ""
 	if totalSingleLinks > 0 {
 		nodesSectionHTML = fmt.Sprintf(`
-    <div style="margin-top:24px;border-top:1px solid rgba(255,255,255,0.08);padding-top:20px;">
+    <div style="margin-top:24px;border-top:1px solid rgba(0,0,0,0.06);padding-top:20px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <span style="font-size:14px;font-weight:700;color:#f8fafc;">📡 独立节点直连 (%d 个接入点)</span>
-        <span style="font-size:11px;color:#94a3b8;">可按协议筛选直连链接</span>
+        <span style="font-size:14px;font-weight:700;color:#1d1d1f;">📡 独立节点直连 (%d 个接入点)</span>
+        <span style="font-size:11px;color:#86868b;">可按协议筛选直连链接</span>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px;">
-        <button onclick="filterProto('all')" class="proto-tag active" id="btn-proto-all" style="background:#10b98120;color:#34d399;border:1px solid #10b98140;padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">全部协议</button>
-        <button onclick="filterProto('vless')" class="proto-tag" id="btn-proto-vless" style="background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;">Reality</button>
-        <button onclick="filterProto('hy2')" class="proto-tag" id="btn-proto-hy2" style="background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;">Hysteria 2</button>
-        <button onclick="filterProto('tuic')" class="proto-tag" id="btn-proto-tuic" style="background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;">TUIC</button>
-        <button onclick="filterProto('ss')" class="proto-tag" id="btn-proto-ss" style="background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;">Shadowsocks</button>
+        <button onclick="filterProto('all')" class="proto-tag active" id="btn-proto-all" style="background:#0071e315;color:#0071e3;border:1px solid #0071e330;padding:4px 12px;border-radius:999px;font-size:11px;cursor:pointer;font-weight:600;">全部协议</button>
+        <button onclick="filterProto('vless')" class="proto-tag" id="btn-proto-vless" style="background:#f2f2f7;color:#86868b;border:1px solid rgba(0,0,0,0.06);padding:4px 12px;border-radius:999px;font-size:11px;cursor:pointer;">Reality</button>
+        <button onclick="filterProto('hy2')" class="proto-tag" id="btn-proto-hy2" style="background:#f2f2f7;color:#86868b;border:1px solid rgba(0,0,0,0.06);padding:4px 12px;border-radius:999px;font-size:11px;cursor:pointer;">Hysteria 2</button>
+        <button onclick="filterProto('tuic')" class="proto-tag" id="btn-proto-tuic" style="background:#f2f2f7;color:#86868b;border:1px solid rgba(0,0,0,0.06);padding:4px 12px;border-radius:999px;font-size:11px;cursor:pointer;">TUIC</button>
+        <button onclick="filterProto('ss')" class="proto-tag" id="btn-proto-ss" style="background:#f2f2f7;color:#86868b;border:1px solid rgba(0,0,0,0.06);padding:4px 12px;border-radius:999px;font-size:11px;cursor:pointer;">Shadowsocks</button>
       </div>
       <div id="nodes-container">%s</div>
     </div>`, totalSingleLinks, nodeCardsHTML.String())
 	}
 
-	html := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>我的订阅凭证 - Work-V</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: #090d16; color: #f1f5f9; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
-    .card { background: rgba(30, 41, 59, 0.75); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 24px; max-width: 540px; width: 100%%; padding: 28px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-    .title { font-size: 20px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px; }
-    .stat-box { background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 16px; padding: 18px; margin-bottom: 20px; }
-    .progress-bar { width: 100%%; height: 8px; background: #334155; border-radius: 999px; overflow: hidden; margin: 12px 0 8px 0; }
-    .progress-fill { height: 100%%; background: linear-gradient(90deg, #10b981, #06b6d4); border-radius: 999px; width: %.1f%%%%; transition: width 0.3s; }
-    .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 18px; }
-    .btn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 14px; border-radius: 14px; font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; }
-    .btn-clash { background: rgba(6, 182, 212, 0.15); color: #22d3ee; border-color: rgba(6, 182, 212, 0.3); }
-    .btn-clash:hover { background: rgba(6, 182, 212, 0.25); }
-    .btn-singbox { background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); }
-    .btn-singbox:hover { background: rgba(168, 85, 247, 0.25); }
-    .btn-sr { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); }
-    .btn-sr:hover { background: rgba(245, 158, 11, 0.25); }
-    .btn-copy { background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3); }
-    .btn-copy:hover { background: rgba(16, 185, 129, 0.25); }
-    .sub-input { width: 100%%; background: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 10px 14px; font-family: monospace; font-size: 11px; color: #94a3b8; outline: none; margin-bottom: 14px; word-break: break-all; }
-    .qr-box { text-align: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
-    .qr-img { width: 180px; height: 180px; border-radius: 12px; background: white; padding: 8px; margin: 0 auto 8px auto; display: block; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, sans-serif; }
+    body { background: #f5f5f7; color: #1d1d1f; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .card { background: #ffffff; border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 28px; max-width: 540px; width: 100%%; padding: 30px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04); }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .title { font-size: 20px; font-weight: 700; color: #1d1d1f; display: flex; align-items: center; gap: 8px; letter-spacing: -0.02em; }
+    .stat-box { background: #f2f2f7; border: 1px solid rgba(0, 0, 0, 0.04); border-radius: 18px; padding: 18px; margin-bottom: 18px; }
+    .progress-bar { width: 100%%; height: 8px; background: #e5e5ea; border-radius: 999px; overflow: hidden; margin: 12px 0 8px 0; }
+    .progress-fill { height: 100%%; background: linear-gradient(90deg, #34c759, #30b0c7); border-radius: 999px; width: %.1f%%%%; transition: width 0.3s; }
+    .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
+    .btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 12px 14px; border-radius: 14px; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; }
+    .btn-clash { background: rgba(0, 113, 227, 0.08); color: #0071e3; border-color: rgba(0, 113, 227, 0.2); }
+    .btn-clash:hover { background: rgba(0, 113, 227, 0.15); }
+    .btn-singbox { background: rgba(175, 82, 222, 0.08); color: #af52de; border-color: rgba(175, 82, 222, 0.2); }
+    .btn-singbox:hover { background: rgba(175, 82, 222, 0.15); }
+    .btn-sr { background: rgba(255, 149, 0, 0.08); color: #ff9500; border-color: rgba(255, 149, 0, 0.2); }
+    .btn-sr:hover { background: rgba(255, 149, 0, 0.15); }
+    .btn-copy { background: rgba(52, 199, 89, 0.08); color: #34c759; border-color: rgba(52, 199, 89, 0.2); }
+    .btn-copy:hover { background: rgba(52, 199, 89, 0.15); }
+    .sub-input { width: 100%%; background: #f2f2f7; border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 12px; padding: 10px 14px; font-family: monospace; font-size: 11px; color: #1d1d1f; outline: none; margin-bottom: 14px; word-break: break-all; }
+    .qr-box { text-align: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(0, 0, 0, 0.06); }
+    .qr-img { width: 160px; height: 160px; border-radius: 12px; background: white; padding: 8px; margin: 0 auto 8px auto; display: block; border: 1px solid rgba(0, 0, 0, 0.08); }
+    .lock-btn { background: #f2f2f7; color: #86868b; border: 1px solid rgba(0, 0, 0, 0.06); padding: 5px 12px; border-radius: 999px; font-size: 11px; text-decoration: none; font-weight: 500; transition: all 0.2s; }
+    .lock-btn:hover { background: #e5e5ea; color: #1d1d1f; }
   </style>
 </head>
 <body>
@@ -1115,20 +1287,27 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
       <div class="title">
         <span>⚡ Work-V 订阅中心</span>
       </div>
-      <div>%s</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        %s
+        <a href="?logout=1" class="lock-btn">🔒 锁定</a>
+      </div>
     </div>
 
     <div class="stat-box">
-      <div style="display:flex;justify-content:space-between;font-size:13px;color:#94a3b8;">
-        <span>用户: <strong style="color:#fff;">%s</strong></span>
-        <span>有效期至: <strong style="color:#fff;">%s</strong></span>
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:#86868b;">
+        <span>用户: <strong style="color:#1d1d1f;">%s</strong></span>
+        <span>有效期至: <strong style="color:#1d1d1f;">%s</strong></span>
       </div>
       <div class="progress-bar">
         <div class="progress-fill"></div>
       </div>
-      <div style="display:flex;justify-content:space-between;font-size:12px;color:#94a3b8;">
-        <span>已用流量: <strong style="color:#34d399;">%s</strong></span>
-        <span>总配额: <strong style="color:#fff;">%s</strong> (%.1f%%%%)</span>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#86868b;">
+        <span>已用流量: <strong style="color:#34c759;">%s</strong></span>
+        <span>总配额: <strong style="color:#1d1d1f;">%s</strong> (%.1f%%%%)</span>
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(0,0,0,0.06);display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:12px;color:#86868b;">🔑 账号专属凭证密码: <strong style="color:#0071e3;font-family:monospace;font-size:13px;">%s</strong></span>
+        <button onclick="copyText('%s')" style="background:#ffffff;border:1px solid rgba(0,0,0,0.1);padding:3px 10px;border-radius:999px;font-size:11px;color:#1d1d1f;cursor:pointer;font-weight:500;">复制密码</button>
       </div>
     </div>
 
@@ -1140,15 +1319,15 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
     </div>
 
     <div style="display:flex;gap:10px;margin-bottom:14px;">
-      <a href="%s?type=clash" download="clash.yaml" class="btn" style="flex:1;background:rgba(6,182,212,0.1);color:#22d3ee;border-color:rgba(6,182,212,0.25);font-size:12px;padding:10px;">📥 下载 Clash 配置</a>
-      <a href="%s?type=sing-box" download="singbox.json" class="btn" style="flex:1;background:rgba(168,85,247,0.1);color:#c084fc;border-color:rgba(168,85,247,0.25);font-size:12px;padding:10px;">📥 下载 Sing-box 配置</a>
+      <a href="%s" download="clash.yaml" class="btn" style="flex:1;background:#f2f2f7;color:#1d1d1f;border-color:rgba(0,0,0,0.06);font-size:12px;padding:10px;">📥 下载 Clash 配置</a>
+      <a href="%s" download="singbox.json" class="btn" style="flex:1;background:#f2f2f7;color:#1d1d1f;border-color:rgba(0,0,0,0.06);font-size:12px;padding:10px;">📥 下载 Sing-box 配置</a>
     </div>
 
     <input type="text" readonly value="%s" class="sub-input" onclick="this.select()">
 
     <div class="qr-box">
       <img src="/api/v1/qrcode?text=%s" class="qr-img" alt="Subscription QR Code">
-      <p style="font-size:11px;color:#64748b;">支持手机客户端打开相机或小火箭直接扫码导入</p>
+      <p style="font-size:11px;color:#86868b;">手机客户端打开相机或小火箭直接扫码一键导入</p>
     </div>
 
     %s
@@ -1178,14 +1357,14 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
         var b = document.getElementById('btn-proto-' + t);
         if (b) {
           if (t === tag) {
-            b.style.background = '#10b98120';
-            b.style.color = '#34d399';
-            b.style.borderColor = '#10b98140';
+            b.style.background = '#0071e315';
+            b.style.color = '#0071e3';
+            b.style.borderColor = '#0071e330';
             b.style.fontWeight = '600';
           } else {
-            b.style.background = 'rgba(255,255,255,0.05)';
-            b.style.color = '#94a3b8';
-            b.style.borderColor = 'rgba(255,255,255,0.08)';
+            b.style.background = '#f2f2f7';
+            b.style.color = '#86868b';
+            b.style.borderColor = 'rgba(0,0,0,0.06)';
             b.style.fontWeight = 'normal';
           }
         }
@@ -1210,8 +1389,8 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
     }
   </script>
 </body>
-</html>`, percent, statusBadge, user.Username, expireStr, usedStr, limitStr, percent, clashURL, singboxURL, srURL, subBase, subBase, subBase, subBase, url.QueryEscape(subBase), nodesSectionHTML)
+</html>`, percent, statusBadge, user.Username, expireStr, usedStr, limitStr, percent, user.Password, user.Password, clashURL, singboxURL, srURL, subWithPwd, clashTargetURL, singboxTargetURL, subWithPwd, url.QueryEscape(subWithPwd), nodesSectionHTML)
 
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, html)
+	c.String(http.StatusOK, htmlContent)
 }

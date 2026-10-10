@@ -303,7 +303,17 @@ func main() {
 				fmt.Println("--------------------------------------------------------------------------------")
 			}
 		}
-		fmt.Printf("【通用自适应聚合订阅链接】\n%s/sub/%s\n", baseURL, user.SubToken)
+		pwd := user.Password
+		if pwd == "" {
+			if len(user.UUID) >= 8 {
+				pwd = user.UUID[:8]
+			} else {
+				pwd = api.RandomToken(8)
+			}
+		}
+		fmt.Printf("【用户账号凭据】\n• 订阅用户名: %s\n• 凭据密码:   %s\n", user.Username, pwd)
+		fmt.Printf("【通用自适应聚合订阅链接 (免交互直接导入)】\n%s/sub/%s?pwd=%s\n", baseURL, user.SubToken, pwd)
+		fmt.Printf("【标准订阅链接 (客户端 Basic Auth 鉴权)】\n%s/sub/%s\n", baseURL, user.SubToken)
 		fmt.Println("================================================================================")
 		os.Exit(0)
 	}

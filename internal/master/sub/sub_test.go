@@ -47,7 +47,7 @@ func newSubContext(t *testing.T, token string, ua string) (*gin.Context, *httpte
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/sub/"+token, nil)
+	c.Request = httptest.NewRequest("GET", "/sub/"+token+"?pwd=testpassword", nil)
 	c.Request.Host = "panel.example.com"
 	if ua != "" {
 		c.Request.Header.Set("User-Agent", ua)
@@ -63,6 +63,7 @@ func createNodeAndUser(t *testing.T, node *model.Node, username string) model.Us
 	}
 	user := model.User{
 		Username: username,
+		Password: "testpassword",
 		UUID:     "11111111-1111-1111-1111-111111111111",
 		SubToken: "subt",
 		Status:   "active",
@@ -124,6 +125,7 @@ func TestHandleSubscription(t *testing.T) {
 
 	activeUser := model.User{
 		Username:     "active_user",
+		Password:     "pass1234",
 		UUID:         "11111111-2222-3333-4444-555555555555",
 		SubToken:     "sub_active_token",
 		TrafficLimit: 100 * 1024 * 1024 * 1024,
@@ -135,6 +137,7 @@ func TestHandleSubscription(t *testing.T) {
 
 	suspendedUser := model.User{
 		Username:     "suspended_user",
+		Password:     "pass1234",
 		UUID:         "22222222-3333-4444-5555-666666666666",
 		SubToken:     "sub_suspended_token",
 		TrafficLimit: 10 * 1024 * 1024 * 1024,
@@ -157,20 +160,31 @@ func TestHandleSubscription(t *testing.T) {
 		}
 	}
 
-	// Case 2: 熔断用户 -> 403
+	// Case 1b: 存在但无凭据的客户端请求 -> 401
 	{
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/sub/sub_suspended_token", nil)
+		req, _ := http.NewRequest("GET", "/sub/sub_active_token", nil)
+		req.Header.Set("User-Agent", "v2rayNG/1.8.5")
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401 for unauthenticated client, got %d", w.Code)
+		}
+	}
+
+	// Case 2: 熔断用户 (携带正确凭证) -> 403
+	{
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/sub/sub_suspended_token?pwd=pass1234", nil)
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusForbidden {
 			t.Errorf("expected 403 for suspended user, got %d", w.Code)
 		}
 	}
 
-	// Case 3: 默认 Base64 订阅返回
+	// Case 3: 默认 Base64 订阅返回 (带凭据)
 	{
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/sub/sub_active_token", nil)
+		req, _ := http.NewRequest("GET", "/sub/sub_active_token?pwd=pass1234", nil)
 		req.Header.Set("User-Agent", "v2rayNG/1.8.5")
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -192,10 +206,10 @@ func TestHandleSubscription(t *testing.T) {
 		}
 	}
 
-	// Case 4: Clash YAML 导出 (?type=clash)
+	// Case 4: Clash YAML 导出 (?type=clash&pwd=pass1234)
 	{
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/sub/sub_active_token?type=clash", nil)
+		req, _ := http.NewRequest("GET", "/sub/sub_active_token?type=clash&pwd=pass1234", nil)
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 200 for clash export, got %d", w.Code)
@@ -213,10 +227,10 @@ func TestHandleSubscription(t *testing.T) {
 		}
 	}
 
-	// Case 5: Sing-box JSON 导出 (?type=singbox)
+	// Case 5: Sing-box JSON 导出 (?type=singbox&pwd=pass1234)
 	{
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/sub/sub_active_token?type=singbox", nil)
+		req, _ := http.NewRequest("GET", "/sub/sub_active_token?type=singbox&pwd=pass1234", nil)
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 200 for singbox export, got %d", w.Code)
@@ -234,10 +248,26 @@ func TestHandleSubscription(t *testing.T) {
 		}
 	}
 
-	// Case 6: 浏览器直接访问自服务门户 (Accept: text/html)
+	// Case 6: 浏览器未带凭据访问自服务门户 -> 显示安全锁定页面 (200)
 	{
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/sub/sub_active_token", nil)
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 for browser lock portal, got %d", w.Code)
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "订阅凭证安全解锁") {
+			t.Errorf("portal HTML missing lock title, got: %s", body)
+		}
+	}
+
+	// Case 7: 浏览器携带凭据访问自服务门户 -> 解锁并渲染控制台 (200)
+	{
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/sub/sub_active_token?pwd=pass1234", nil)
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {

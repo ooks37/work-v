@@ -576,6 +576,7 @@ func HandleGetUsers(c *gin.Context) {
 func HandleCreateUser(c *gin.Context) {
 	var req struct {
 		Username       string `json:"username" binding:"required"`
+		Password       string `json:"password"`
 		TrafficLimitGB int64  `json:"traffic_limit_gb"` // GB
 		ExpireDays     int64  `json:"expire_days"`      // 天数
 	}
@@ -586,6 +587,10 @@ func HandleCreateUser(c *gin.Context) {
 
 	userUUID := uuid.New().String()
 	subToken := RandomToken(16)
+	pwd := strings.TrimSpace(req.Password)
+	if pwd == "" {
+		pwd = RandomToken(8)
+	}
 
 	var expireAt int64 = 0
 	if req.ExpireDays > 0 {
@@ -594,6 +599,7 @@ func HandleCreateUser(c *gin.Context) {
 
 	user := model.User{
 		Username:     req.Username,
+		Password:     pwd,
 		UUID:         userUUID,
 		SubToken:     subToken,
 		TrafficLimit: req.TrafficLimitGB * 1024 * 1024 * 1024,
@@ -628,6 +634,7 @@ func HandleUpdateUser(c *gin.Context) {
 
 	var req struct {
 		Username       string `json:"username"`
+		Password       string `json:"password"`
 		TrafficLimitGB *int64 `json:"traffic_limit_gb"`
 		ResetTraffic   bool   `json:"reset_traffic"`
 		ExpireAt       *int64 `json:"expire_at"`
@@ -640,6 +647,9 @@ func HandleUpdateUser(c *gin.Context) {
 
 	if req.Username != "" {
 		user.Username = req.Username
+	}
+	if req.Password != "" {
+		user.Password = req.Password
 	}
 	if req.TrafficLimitGB != nil {
 		user.TrafficLimit = *req.TrafficLimitGB * 1024 * 1024 * 1024
@@ -902,6 +912,7 @@ func HandleRegenerateUserCredentials(c *gin.Context) {
 	oldUUID := user.UUID
 	user.UUID = uuid.New().String()
 	user.SubToken = RandomToken(16)
+	user.Password = RandomToken(8)
 	model.DB.Save(&user)
 
 	// 熔断旧凭据
@@ -918,6 +929,7 @@ func HandleRegenerateUserCredentials(c *gin.Context) {
 		"message":   "用户凭据与订阅 Token 已重置",
 		"uuid":      user.UUID,
 		"sub_token": user.SubToken,
+		"password":  user.Password,
 	})
 }
 

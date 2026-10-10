@@ -69,6 +69,11 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	// 检查是否需要初始化默认管理员
 	initDefaultAdmin(db)
 
+	// 补齐历史无密码用户的账号专属凭证密码
+	db.Model(&User{}).Where("password = '' OR password IS NULL").Updates(map[string]any{
+		"password": gorm.Expr("substr(uuid, 1, 8)"),
+	})
+
 	return db, nil
 }
 

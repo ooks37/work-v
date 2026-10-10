@@ -576,9 +576,13 @@ func BatchCreateUsers(prefix string, count int, trafficLimitGB int64, expireDays
 		uBytes := make([]byte, 4)
 		rand.Read(uBytes)
 		uname := fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(uBytes))
+		pBytes := make([]byte, 4)
+		rand.Read(pBytes)
+		pwd := hex.EncodeToString(pBytes)
 
 		user := model.User{
 			Username:     uname,
+			Password:     pwd,
 			UUID:         uuid.New().String(),
 			SubToken:     hex.EncodeToString(append(uBytes, uBytes...)),
 			TrafficLimit: trafficLimitGB * 1024 * 1024 * 1024,

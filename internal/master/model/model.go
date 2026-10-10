@@ -55,6 +55,7 @@ type Node struct {
 type User struct {
 	ID           uint           `gorm:"primaryKey" json:"id"`
 	Username     string         `gorm:"size:64;not null" json:"username"`
+	Password     string         `gorm:"size:64;default:''" json:"password"`            // 用户专属账号凭证密码
 	UUID         string         `gorm:"uniqueIndex;size:64;not null" json:"uuid"`      // Sing-box 客户端鉴权 UUID
 	SubToken     string         `gorm:"uniqueIndex;size:64;not null" json:"sub_token"` // 外部订阅专用 Token
 	TrafficLimit int64          `gorm:"default:0" json:"traffic_limit"`                // 流量配额限制 (Bytes, 0为不限)
