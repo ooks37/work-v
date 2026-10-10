@@ -280,11 +280,22 @@ install_master() {
     elif [ -f "./work-v-master-linux" ]; then
         cp -f ./work-v-master-linux "$INSTALL_DIR/work-v-master"
     else
+        # 关键: 直接 curl -o 覆盖"正在运行的二进制"必然 ETXTBSY (Text file busy) 而失败,
+        # 且历史实现把失败吞掉, 于是升级看起来成功、实际还在跑旧文件。
+        # 这里统一下载到 .new 再原子 mv 替换 (mv 替换运行中的二进制是允许的)。
         echo "正在从主控/源拉取预编译 Master 产物: $SERVER/download/master-$GO_ARCH ..."
-        curl -fsSL "$SERVER/download/master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master" 2>/dev/null || {
+        rm -f "$INSTALL_DIR/work-v-master.new"
+        curl -fsSL "$SERVER/download/master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master.new" 2>/dev/null || {
             echo -e "${COLOR_YELLOW}⚠️ 从本地主控直接拉取失败，尝试从备用仓库镜像获取...${COLOR_RESET}"
-            curl -fsSL "https://github.com/ooks37/work-v/releases/latest/download/work-v-master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master" 2>/dev/null || true
+            curl -fsSL "https://github.com/ooks37/work-v/releases/latest/download/work-v-master-$GO_ARCH" -o "$INSTALL_DIR/work-v-master.new" 2>/dev/null || true
         }
+        # 校验: 必须是非空并且是可执行的 ELF/Mach-O 产物
+        if [ -s "$INSTALL_DIR/work-v-master.new" ]; then
+            chmod +x "$INSTALL_DIR/work-v-master.new"
+            mv -f "$INSTALL_DIR/work-v-master.new" "$INSTALL_DIR/work-v-master"
+        else
+            rm -f "$INSTALL_DIR/work-v-master.new"
+        fi
     fi
 
     if [ ! -f "$INSTALL_DIR/work-v-master" ]; then
@@ -432,10 +443,18 @@ install_agent() {
         cp -f /opt/work-v-master/work-v-agent "$INSTALL_DIR/work-v-agent"
     else
         echo "正在从主控拉取 prebuilt Agent 二进制: $SERVER/download/agent-$GO_ARCH ..."
-        curl -fsSL "$SERVER/download/agent-$GO_ARCH" -o "$INSTALL_DIR/work-v-agent" 2>/dev/null || {
+        # 同 master: 覆盖运行中的二进制会 ETXTBSY, 必须下载到 .new 再原子替换
+        rm -f "$INSTALL_DIR/work-v-agent.new"
+        curl -fsSL "$SERVER/download/agent-$GO_ARCH" -o "$INSTALL_DIR/work-v-agent.new" 2>/dev/null || {
             echo -e "${COLOR_YELLOW}⚠️ 从主控直接拉取失败，尝试通用包...${COLOR_RESET}"
-            curl -fsSL "$SERVER/download/work-v-agent" -o "$INSTALL_DIR/work-v-agent" 2>/dev/null || true
+            curl -fsSL "$SERVER/download/work-v-agent" -o "$INSTALL_DIR/work-v-agent.new" 2>/dev/null || true
         }
+        if [ -s "$INSTALL_DIR/work-v-agent.new" ]; then
+            chmod +x "$INSTALL_DIR/work-v-agent.new"
+            mv -f "$INSTALL_DIR/work-v-agent.new" "$INSTALL_DIR/work-v-agent"
+        else
+            rm -f "$INSTALL_DIR/work-v-agent.new"
+        fi
     fi
 
     if [ ! -f "$INSTALL_DIR/work-v-agent" ]; then
@@ -497,7 +516,7 @@ Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=-/etc/work-v/agent.env
-ExecStart=$INSTALL_DIR/work-v-agent --server $SERVER --token ${WORKV_TOKEN}
+ExecStart=$INSTALL_DIR/work-v-agent --server $SERVER
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576

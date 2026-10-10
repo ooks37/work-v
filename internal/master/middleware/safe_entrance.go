@@ -330,13 +330,9 @@ func SafeEntranceFilter() gin.HandlerFunc {
 			return
 		}
 
-		// 5. 允许通过 URL 参数紧急带入密钥访问 (例如 ?safe_key=/safe_entry)
-		keyParam := c.Query("safe_key")
-		if keyParam != "" && "/"+strings.TrimPrefix(keyParam, "/") == safePath {
-			SetSafeEntranceCookie(c)
-			c.Next()
-			return
-		}
+		// 5. 已移除 ?safe_key= 形式的"URL 带密钥登录":
+		//    它会把入口凭据写进 nginx 访问日志/浏览器历史/Referer, 等于把安全入口泄露出去。
+		//    入口路径本身是 16 位随机 hex (2^64 空间), 暴力枚举不可行, 因此只保留 Cookie 认证。
 
 		// 7. 未授权访问拦截：API 返回 403 JSON，浏览器展示类似宝塔安全入口提示页
 		if strings.HasPrefix(path, "/api/") {

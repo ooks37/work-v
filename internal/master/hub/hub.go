@@ -70,6 +70,8 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 开启握手流程：等待首个认证消息
+	// 未认证连接同样必须限制单帧大小, 否则任何人都能推超大首帧打爆内存
+	conn.SetReadLimit(64 * 1024)
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var authMsg common.WSMessage
 	if err := conn.ReadJSON(&authMsg); err != nil {
@@ -173,15 +175,19 @@ func (h *Hub) register(agent *AgentConn) {
 }
 
 func (h *Hub) unregister(agent *AgentConn) {
+	removed := false
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	if cur, exists := h.agents[agent.NodeID]; exists && cur == agent {
 		delete(h.agents, agent.NodeID)
 		delete(h.tokenMap, agent.NodeToken)
 		close(agent.SendChan)
+		removed = true
+	}
+	h.mu.Unlock()
 
-		// 标为离线
+	// DB 写必须在释放写锁之后: SQLite 慢查询/忙等待时, 持锁写库会把
+	// register / PushConfigToNode / BroadcastCutoffUser / IsNodeOnline 全部挡死。
+	if removed {
 		model.DB.Model(&model.Node{}).Where("id = ?", agent.NodeID).Update("status", "offline")
 		log.Printf("[Hub] 节点已下线: ID=%d", agent.NodeID)
 	}

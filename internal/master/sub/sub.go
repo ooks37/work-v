@@ -2,9 +2,9 @@ package sub
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,37 +12,61 @@ import (
 
 	"work-v/internal/common"
 	"work-v/internal/master/model"
-	"work-v/internal/master/service"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
 
-// resolveNodeAddress 智能解析客户端可连接的节点地址 (优先节点显式配置，回退主控域名或当前 Host)
+// resolveNodeAddress 解析客户端可连接的节点地址 (只用节点自己的配置)。
+//
+// 安全: 历史实现会回落到 "主控域名" 甚至 "请求 Host"。后者意味着任何拿到订阅令牌的人
+// 只要伪造 Host 头, 就能让订阅里所有节点地址变成他自己控制的域名 (流量劫持/钓鱼),
+// 因此这里只认节点自身已落库的地址; 没地址的节点直接跳过 (agent 连上后会自动回填)。
 func resolveNodeAddress(n *model.Node, c *gin.Context) string {
 	addr := strings.TrimSpace(n.Address)
-	if addr != "" && addr != "自动探测" && addr != "127.0.0.1" {
-		return addr
+	if addr == "" || addr == "自动探测" || addr == "127.0.0.1" || addr == "localhost" {
+		return ""
 	}
-	if d := model.GetSetting("master_domain", ""); d != "" {
-		return d
-	}
-	host := c.Request.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		return h
-	}
-	return host
+	return addr
 }
 
-// resolveInbounds 解析节点入站配置; 节点还没有落库入站时回落到默认配置。
-// 历史实现在这里直接 continue, 于是用 work-v add-node 建出来的节点
-// (InboundsJSON 为空) 在订阅里一个都不出现, 而面板"节点链接"却显示正常, 极难排查。
+// normalizeRealityKey 归一化 Reality 公钥。
+// 历史版本把公钥以 64 位 hex 存库, 而客户端需要的是 32 字节原始数据的 base64url 形式;
+// 直接下发 hex 会让客户端解出 48 字节公钥, 该节点对所有客户端都握手失败。
+func normalizeRealityKey(k string) string {
+	k = strings.TrimSpace(k)
+	if len(k) != 64 {
+		return k
+	}
+	raw, err := hex.DecodeString(k)
+	if err != nil {
+		return k
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// uniqueName 保证同一份订阅里的代理名/tag 唯一。
+// 重名会让 Mihomo 因 "duplicate name" 拒绝整份配置 (整张订阅全部不可用)。
+func uniqueName(used map[string]int, base string) string {
+	used[base]++
+	if used[base] == 1 {
+		return base
+	}
+	return fmt.Sprintf("%s-%d", base, used[base])
+}
+
+// resolveInbounds 解析节点入站配置 (纯读)。
+//
+// 历史实现在这里是"空则生成新 x25519 密钥并 UPDATE 落库": 订阅是免鉴权的 GET,
+// 并发请求会各自生成不同密钥互相覆盖, 先响应出去的订阅里的 pbk 永远对不上节点实际密钥,
+// 该用户就再也握手不上了 (同时任何持令牌者都能反复覆盖节点密钥)。
+// 现在入站在建节点时一次性生成 (含启动时的历史数据补齐), 订阅侧只读。
 func resolveInbounds(n *model.Node) []common.InboundConfig {
 	var inbounds []common.InboundConfig
-	if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err == nil && len(inbounds) > 0 {
-		return inbounds
+	if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
+		return nil
 	}
-	return service.GetOrCreateDefaultInbounds(n)
+	return inbounds
 }
 
 // HandleSubscription 处理多端自适应订阅主入口
@@ -124,7 +148,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				params := url.Values{}
 				params.Set("security", "reality")
 				params.Set("sni", serverName)
-				params.Set("pbk", pubKey)
+				params.Set("pbk", normalizeRealityKey(pubKey))
 				params.Set("sid", shortID)
 				params.Set("type", "tcp")
 				params.Set("flow", "xtls-rprx-vision")
@@ -149,7 +173,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				params := url.Values{}
 				params.Set("security", "reality")
 				params.Set("sni", serverName)
-				params.Set("pbk", pubKey)
+				params.Set("pbk", normalizeRealityKey(pubKey))
 				params.Set("sid", shortID)
 				params.Set("type", "grpc")
 				params.Set("serviceName", svcName)
@@ -199,6 +223,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 	var proxies []map[string]any
 	var proxyNames []string
+	usedNames := make(map[string]int) // 同名节点会导致 Mihomo 拒绝整份配置, 这里强制去重
 
 	for _, n := range nodes {
 		nodeAddr := resolveNodeAddress(&n, c)
@@ -217,7 +242,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 
 			switch in.Type {
 			case "vless":
-				name := fmt.Sprintf("%s-Reality", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Reality", n.Name))
 				pubKey, _ := in.Options["public_key"].(string)
 				shortID, _ := in.Options["short_id"].(string)
 				serverName, _ := in.Options["server_name"].(string)
@@ -237,7 +262,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 					"flow":       "xtls-rprx-vision",
 					"servername": serverName,
 					"reality-opts": map[string]any{
-						"public-key": pubKey,
+						"public-key": normalizeRealityKey(pubKey),
 						"short-id":   shortID,
 					},
 					"client-fingerprint": "chrome",
@@ -246,7 +271,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "grpc-reality":
-				name := fmt.Sprintf("%s-gRPC-Reality", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-gRPC-Reality", n.Name))
 				pubKey, _ := in.Options["public_key"].(string)
 				shortID, _ := in.Options["short_id"].(string)
 				serverName, _ := in.Options["server_name"].(string)
@@ -269,7 +294,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 					"udp":        true,
 					"servername": serverName,
 					"reality-opts": map[string]any{
-						"public-key": pubKey,
+						"public-key": normalizeRealityKey(pubKey),
 						"short-id":   shortID,
 					},
 					"grpc-opts": map[string]any{
@@ -281,7 +306,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "hysteria2":
-				name := fmt.Sprintf("%s-Hy2", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Hy2", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
 					serverName = nodeAddr
@@ -300,7 +325,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxyNames = append(proxyNames, name)
 
 			case "tuic":
-				name := fmt.Sprintf("%s-TUIC", n.Name)
+				name := uniqueName(usedNames, fmt.Sprintf("%s-TUIC", n.Name))
 				p := map[string]any{
 					"name":                  name,
 					"type":                  "tuic",
@@ -311,6 +336,26 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 					"alpn":                  []string{"h3"},
 					"congestion-controller": "bbr",
 					"skip-cert-verify":      true,
+				}
+				proxies = append(proxies, p)
+				proxyNames = append(proxyNames, name)
+
+			case "anytls":
+				// 历史实现漏了这个分支: 服务端开了 AnyTLS(8445) 但 Clash 订阅里静默消失
+				name := uniqueName(usedNames, fmt.Sprintf("%s-AnyTLS", n.Name))
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = nodeAddr
+				}
+				p := map[string]any{
+					"name":             name,
+					"type":             "anytls",
+					"server":           nodeAddr,
+					"port":             in.ListenPort,
+					"password":         user.UUID,
+					"sni":              serverName,
+					"skip-cert-verify": true,
+					"udp":              true,
 				}
 				proxies = append(proxies, p)
 				proxyNames = append(proxyNames, name)
@@ -402,7 +447,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 						"server_name": serverName,
 						"reality": map[string]any{
 							"enabled":    true,
-							"public_key": pubKey,
+							"public_key": normalizeRealityKey(pubKey),
 							"short_id":   shortID,
 						},
 						"utls": map[string]any{
@@ -441,7 +486,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 						"server_name": serverName,
 						"reality": map[string]any{
 							"enabled":    true,
-							"public_key": pubKey,
+							"public_key": normalizeRealityKey(pubKey),
 							"short_id":   shortID,
 						},
 						"utls": map[string]any{

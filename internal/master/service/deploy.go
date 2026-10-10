@@ -52,8 +52,18 @@ func deploySnapshot(nodeID uint) string {
 	return ""
 }
 
+// deployFlush 把当前安装输出全量写回节点记录。
+// 注意: 该表与主控共用 SetMaxOpenConns(1) 的唯一连接, 因此调用频率必须节制
+// (历史实现每 1.5s 全量重写, 15 分钟安装会刷 ~600 次且成本随日志长度增长),
+// 这里同时按"末尾截断"限制单次写入体积。
+const deployLogMaxBytes = 64 * 1024
+
 func deployFlush(nodeID uint) {
 	out := deploySnapshot(nodeID)
+	if len(out) > deployLogMaxBytes {
+		// 保留末尾: 失败原因通常在最后
+		out = "...(前段输出已省略)...\n" + out[len(out)-deployLogMaxBytes:]
+	}
 	_ = model.DB.Model(&model.Node{}).Where("id = ?", nodeID).Update("deploy_log", out).Error
 }
 
@@ -126,7 +136,7 @@ func AutoDeployNode(nodeID uint, req AutoDeployRequest) {
 
 		stop := make(chan struct{})
 		go func() {
-			ticker := time.NewTicker(1500 * time.Millisecond)
+			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {

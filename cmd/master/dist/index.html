@@ -1283,7 +1283,7 @@
         // 修改密码
         const changePassword = async () => {
           try {
-            await apiFetch('/api/v1/admin/change-password', {
+            const res = await apiFetch('/api/v1/admin/change-password', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(passForm)
@@ -1291,7 +1291,13 @@
             showPassModal.value = false;
             passForm.old_password = '';
             passForm.new_password = '';
-            addToast('密码已更新，请牢记新密码');
+            if (res && res.relogin) {
+              // 主控已轮换 JWT 密钥, 旧令牌全部失效 -> 前端同步登出, 避免后续请求 401
+              addToast('密码已更新，请用新密码重新登录');
+              setTimeout(() => { logout(); }, 1200);
+            } else {
+              addToast('密码已更新，请牢记新密码');
+            }
           } catch (err) {
             addToast(err.message, 'error');
           }

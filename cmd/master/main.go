@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,6 +52,10 @@ func listenAddr(bind string, port int) string {
 	return fmt.Sprintf("%s:%d", bind, port)
 }
 
+// masterHostRe 校验主控域名/地址的字符集。
+// 该值会被写进免鉴权的 /install.sh (由目标机 root 执行), 必须杜绝引号/分号等 shell 元字符。
+var masterHostRe = regexp.MustCompile(`^[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
+
 func main() {
 	port := flag.Int("port", 8080, "Web 服务监听端口")
 	bindAddr := flag.String("bind", "", "监听地址: 留空=所有网卡; 设为 127.0.0.1 则只允许本机/反向代理访问 (推荐配合 HTTPS 反代)")
@@ -81,6 +86,10 @@ func main() {
 			d = strings.TrimPrefix(d, "http://")
 			d = strings.TrimPrefix(d, "https://")
 			d = strings.TrimRight(d, "/")
+			// 安全: 域名会进入免鉴权的 /install.sh (root 执行), 必须严格校验字符集
+			if !masterHostRe.MatchString(d) {
+				log.Fatalf("[Work-V] 域名格式不合法: %q (只允许字母/数字/点/横线, 可带端口)", d)
+			}
 			_ = model.SetSetting("master_domain", d)
 			log.Printf("[Work-V] 主控访问域名已配置为: https://%s", d)
 		}
@@ -290,6 +299,9 @@ func main() {
 
 	// 启动后台到期与熔断监控
 	service.StartQuotaWatchdog()
+
+	// 历史节点入站补齐 (订阅侧已改为纯读, 缺失入站的节点不会出现在订阅里)
+	service.EnsureAllNodesInbounds()
 
 	// 准备前端静态资源文件系统
 	subFS, err := fs.Sub(embeddedWeb, "dist")

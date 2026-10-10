@@ -14,10 +14,12 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +39,8 @@ type SingboxRunner struct {
 	configDir     string
 	clashSecret   string
 	cmd           *exec.Cmd
+	pidFile       string
+	exited        chan struct{} // 当前内核进程的收尸信号 (由 watcher 关闭)
 	running       bool
 	currentHash   string
 	activeUsers   []common.UserProfile
@@ -60,6 +64,7 @@ func NewSingboxRunner(singboxPath, configDir string) *SingboxRunner {
 	return &SingboxRunner{
 		singboxPath: singboxPath,
 		configDir:   configDir,
+		pidFile:     filepath.Join(configDir, "sing-box.pid"),
 		clashSecret: hex.EncodeToString(secretBytes),
 		lastConns:   make(map[string]connTrafficSnap),
 	}
@@ -80,12 +85,33 @@ func (r *SingboxRunner) GetPid() int {
 	return 0
 }
 
+// realityHandshake 生成 Reality 拨号目标 {server, server_port}。
+//
+// 致命点 (实测确认): sing-box 的 handshake 由 ServerOptions{server, server_port} 两个独立字段组成,
+// 若把 "gateway.icloud.com:443" 整串写进 server, server_port 就是 0,
+// sing-box 会把整串当成域名去解析 -> NXDOMAIN -> vless-reality / gRPC-Reality 全部握手失败,
+// 而 sing-box check 并不校验该拨号目标, 语法校验永远是绿的, 缺陷极难发现。
+func realityHandshake(dest string) map[string]any {
+	dest = strings.TrimSpace(dest)
+	if dest == "" {
+		dest = "gateway.icloud.com:443"
+	}
+	host, port := dest, 443
+	if h, p, err := net.SplitHostPort(dest); err == nil {
+		host = h
+		if pn, convErr := strconv.Atoi(p); convErr == nil && pn > 0 && pn <= 65535 {
+			port = pn
+		}
+	} else {
+		log.Printf("[Sing-box] ⚠️ Reality dest %q 未包含端口, 已按 443 处理", dest)
+	}
+	return map[string]any{"server": host, "server_port": port}
+}
+
 // ApplyConfig 动态渲染 sing-box 配置文件并热启动/重载
 func (r *SingboxRunner) ApplyConfig(payload *common.NodeConfigPayload) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	r.activeUsers = payload.Users
 
 	if payload.ConfigHash == r.currentHash && r.running {
 		return nil // 配置无变化且正在运行
@@ -111,25 +137,45 @@ func (r *SingboxRunner) ApplyConfig(payload *common.NodeConfigPayload) error {
 		return fmt.Errorf("sing-box 配置语法校验未通过: %w", err)
 	}
 
-	// 原子替换
+	// 原子替换。绝不做"降级为 0644 直接覆盖"的兜底: 那既会把含 Reality 私钥与用户 UUID
+	// 的配置降权给同机其他用户读, 又可能让内核读到半截文件。
 	if err := os.Rename(tmpFile, configFile); err != nil {
-		_ = os.WriteFile(configFile, sbJSON, 0644)
 		_ = os.Remove(tmpFile)
+		return fmt.Errorf("替换 sing-box 配置文件失败: %w", err)
 	}
 
+	// 重新启动 Sing-box 进程; 只有真正启动成功后才认为新配置生效
+	if err := r.restartProcess(configFile); err != nil {
+		return err
+	}
+	// 用户名单必须在配置生效后才切换: 否则启动失败时运行中的内核仍是旧名单,
+	// 被移除用户的流量会变成"无法归属"而漏计, 计费口径错乱。
+	r.activeUsers = payload.Users
 	r.currentHash = payload.ConfigHash
-
-	// 重新启动 Sing-box 进程
-	return r.restartProcess(configFile)
+	return nil
 }
 
 func (r *SingboxRunner) restartProcess(configFile string) error {
 	if r.cmd != nil && r.cmd.Process != nil && r.running {
 		log.Println("[Sing-box] 正在重启进程以加载新配置...")
-		_ = r.cmd.Process.Kill()
-		_ = r.cmd.Wait()
+		// 只负责杀进程组。绝不能在这里再调 cmd.Wait():
+		// 后台 watcher 已经在 Wait 同一个 *exec.Cmd, 两个 Wait 并发会竞争写 ProcessState
+		// (Go 的 exec.Cmd 明确要求只 Wait 一次), 严重时会把 mu 永久锁死。
+		// 这里改为等待 watcher 发出的收尸信号。
+		done := r.exited
+		killProcessGroup(r.cmd.Process.Pid)
+		if done != nil {
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				log.Println("[Sing-box] ⚠️ 等待旧内核退出超时, 继续启动新内核")
+			}
+		}
 		r.running = false
 	}
+
+	// 首次启动 (或上次异常退出) 时先清理遗留孤儿, 否则新内核绑不上端口
+	reapStaleProcess(r.pidFile, r.singboxPath)
 
 	// 进程被替换意味着 Clash API 的连接表与累计计数器都已归零, 必须同步清空本地快照,
 	// 否则新进程的 total 永远小于旧快照, 增量判断长期失效 (漏计费)。
@@ -140,6 +186,7 @@ func (r *SingboxRunner) restartProcess(configFile string) error {
 	cmd := exec.Command(r.singboxPath, "run", "-c", configFile)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	setProcessGroup(cmd) // 自成进程组: 退出/重启时可整组回收, 不留孤儿
 
 	if err := cmd.Start(); err != nil {
 		r.running = false
@@ -147,12 +194,15 @@ func (r *SingboxRunner) restartProcess(configFile string) error {
 	}
 	r.cmd = cmd
 	r.running = true
+	writePidFile(r.pidFile, cmd.Process.Pid)
 	log.Printf("[Sing-box] 进程启动成功, PID=%d", cmd.Process.Pid)
 
 	// 后台等待协程: 只允许"自己这一轮"的进程修改运行状态。
 	// 历史实现无条件置 running=false, 旧进程被 kill 后其 watcher 会在新进程启动完成之后把
 	// 状态改回未运行 -> 面板显示"内核已停止", 且 ApplyConfig 的幂等短路永久失效,
 	// 于是每次下发配置都要重启内核、切断全部用户连接。
+	exited := make(chan struct{})
+	r.exited = exited
 	go func(c *exec.Cmd) {
 		_ = c.Wait()
 		r.mu.Lock()
@@ -160,10 +210,26 @@ func (r *SingboxRunner) restartProcess(configFile string) error {
 			r.running = false
 		}
 		r.mu.Unlock()
+		close(exited)
 		log.Printf("[Sing-box] 进程已退出 (PID=%d)", c.Process.Pid)
 	}(cmd)
 
 	return nil
+}
+
+// Stop 停止内核进程。agent 收到退出信号时必须调用:
+// 否则 sing-box 会成为孤儿进程继续占住 2083/2053/8443/8444 端口,
+// 导致下一次启动的内核绑定失败 (实测确认的问题)。
+func (r *SingboxRunner) Stop() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cmd != nil && r.cmd.Process != nil {
+		log.Printf("[Sing-box] 正在停止内核进程 (PID=%d)...", r.cmd.Process.Pid)
+		// 只负责杀进程组, 收尸交给后台 watcher 的 cmd.Wait, 避免并发 Wait 竞争
+		killProcessGroup(r.cmd.Process.Pid)
+	}
+	r.running = false
+	_ = os.Remove(r.pidFile)
 }
 
 // CutoffUser 针对违规/超额用户，定向精准剔除其连接 (避免无差别断开全服所有用户)
@@ -283,8 +349,10 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 			deltaUp = c.Upload - lastSnap.Upload
 			deltaDown = c.Download - lastSnap.Download
 		} else {
-			deltaUp = c.Upload
-			deltaDown = c.Download
+			// 首次见到该连接: 只建立基线, 不能把"连接自建立以来的累计流量"当作本轮增量。
+			// 历史实现直接取 c.Upload/c.Download: agent 重启(尤其内核仍在运行)后第一轮
+			// 会把连接的全部历史流量重复上报, 用户瞬间超额被熔断。
+			deltaUp, deltaDown = 0, 0
 		}
 
 		if deltaUp < 0 {
@@ -501,10 +569,8 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 					"enabled":     true,
 					"server_name": serverName,
 					"reality": map[string]any{
-						"enabled": true,
-						"handshake": map[string]any{
-							"server": dest,
-						},
+						"enabled":     true,
+						"handshake":   realityHandshake(dest),
 						"private_key": privKey,
 						"short_id":    []string{shortID},
 					},
@@ -552,10 +618,8 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 					"enabled":     true,
 					"server_name": serverName,
 					"reality": map[string]any{
-						"enabled": true,
-						"handshake": map[string]any{
-							"server": dest,
-						},
+						"enabled":     true,
+						"handshake":   realityHandshake(dest),
 						"private_key": privKey,
 						"short_id":    []string{shortID},
 					},
