@@ -855,9 +855,8 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 			for _, u := range payload.Users {
 				if u.Status == "active" {
 					users = append(users, map[string]any{
-						"name":     u.Username,
-						"uuid":     u.UUID,
-						"alter_id": 0,
+						"name": u.Username,
+						"uuid": u.UUID,
 					})
 				}
 			}

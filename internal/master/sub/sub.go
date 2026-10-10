@@ -822,7 +822,6 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					"server_port": in.ListenPort,
 					"uuid":        user.UUID,
 					"security":    "auto",
-					"alter_id":    0,
 					"transport": map[string]any{
 						"type": "ws",
 						"path": wsPath,

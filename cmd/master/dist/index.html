@@ -1737,7 +1737,7 @@
           }
         };
 
-        const addNewInbound = (protoKey) => {
+        const addNewInbound = async (protoKey) => {
           if (!inboundsModal.list) inboundsModal.list = [];
           const usedPorts = new Set(inboundsModal.list.map(i => Number(i.listen_port)));
           let randomPort = Math.floor(Math.random() * 50000) + 10000;
@@ -1747,18 +1747,30 @@
           let newInb = {
             node_id: inboundsModal.node?.id || 0,
             tag: `${protoKey}-in`,
-            type: protoKey === 'grpc' ? 'vless' : protoKey,
+            type: protoKey === 'grpc' ? 'grpc-reality' : protoKey,
             listen_port: randomPort,
             enabled: true,
             options: {
               server_name: 'gateway.icloud.com',
               service_name: protoKey === 'grpc' ? 'grpc-service' : undefined,
-              path: protoKey === 'vmess-ws' ? '/vmess' : (protoKey === 'vless-ws' ? '/ws' : undefined)
+              path: protoKey === 'vmess-ws' ? '/vmess' : (protoKey === 'vless-ws' ? '/ws' : undefined),
+              insecure: true
             }
           };
           if (protoKey === 'vless' || protoKey === 'grpc') {
-            newInb.options.public_key = 'WjJ_4H0fL9rM8hX8Q1p6d9a2s4f7g0h2j4k6l8z0x2c=';
-            newInb.options.short_id = '0123456789abcdef';
+            try {
+              const keys = await apiFetch('/api/v1/admin/generate-reality-keys');
+              newInb.options.public_key = keys.public_key;
+              newInb.options.private_key = keys.private_key;
+              newInb.options.short_id = keys.short_id;
+              newInb.options.dest = 'gateway.icloud.com:443';
+              newInb.options.flow = 'xtls-rprx-vision';
+            } catch (e) {
+              console.error(e);
+            }
+          } else if (protoKey === 'shadowsocks') {
+            newInb.options.method = '2022-blake3-aes-128-gcm';
+            newInb.options.password = 'd29ya3YxMjM0NTY3ODkwMQ==';
           }
           inboundsModal.list.push(newInb);
         };
