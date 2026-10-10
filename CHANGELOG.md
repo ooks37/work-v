@@ -1,5 +1,23 @@
 # 更新日志
 
+## v2.2.1 — 复审加固
+
+1. **部署日志不再回显节点令牌** — `service/deploy.go`
+   自动部署时会把执行的纳管命令写入部署日志（落库 + 面板展示），原来会带上完整 Token；
+   现在写入前统一脱敏为 `node_xxxxxxxxxxxx***`。
+
+2. **部署缓冲区随任务释放** — `service/deploy.go`
+   每个节点的安装输出原先常驻内存 `map`（只增不减），现改为任务结束 `defer` 释放。
+
+3. **安装脚本不再明文回显/暴露令牌** — `install.sh`
+   - 输出里的 `节点令牌` 改为 `node_xxxxxxxxxxxx***` 脱敏；
+   - 含令牌的 `config.json` 权限收紧为 `0600`；
+   - systemd 单元不再把令牌写进 world-readable 的 `ExecStart`，改为
+     `EnvironmentFile=-/etc/work-v/agent.env`（`0600`）+ `--token ${WORKV_TOKEN}`。
+
+4. **前端 SSH 密码不再留存** — `dist/index.html`
+   自动部署提交成功后立即清空内存中的 SSH 密码。
+
 ## v2.2.0 — 更自动 / 更干净
 
 1. **安全入口改为宝塔风格随机路径** — `model/db.go`、`cmd/master/main.go`

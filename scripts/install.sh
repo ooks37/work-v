@@ -403,7 +403,8 @@ install_agent() {
 
     SERVER="${SERVER%/}"
     echo -e "  主控地址: ${COLOR_CYAN}$SERVER${COLOR_RESET}"
-    echo -e "  节点令牌: ${COLOR_CYAN}$TOKEN${COLOR_RESET}"
+    # 令牌不回显完整值 (自动部署模式下该输出会写入主控的部署日志/数据库)
+    echo -e "  节点令牌: ${COLOR_CYAN}${TOKEN:0:12}***${COLOR_RESET}"
 
     # NAT 机器模式处理
     # 说明: 端口无法由本脚本改变。节点实际监听端口由主控下发 (默认 2083/tcp, 2053/tcp,
@@ -476,6 +477,14 @@ install_agent() {
   "singbox_path": "/usr/local/bin/sing-box"
 }
 EOF
+    chmod 600 "$INSTALL_DIR/config.json"   # 含令牌, 仅 root 可读
+
+    # 令牌单独存放到 0600 的环境文件, 避免出现在 world-readable 的 systemd 单元里
+    mkdir -p /etc/work-v && chmod 700 /etc/work-v
+    cat > /etc/work-v/agent.env <<EOF
+WORKV_TOKEN=$TOKEN
+EOF
+    chmod 600 /etc/work-v/agent.env
 
     # 注册 systemd 服务
     cat > /etc/systemd/system/work-v-agent.service <<EOF
@@ -487,7 +496,8 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/work-v-agent --server $SERVER --token $TOKEN
+EnvironmentFile=-/etc/work-v/agent.env
+ExecStart=$INSTALL_DIR/work-v-agent --server $SERVER --token ${WORKV_TOKEN}
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576

@@ -1189,6 +1189,7 @@
               })
             });
             autoDeploy.nodeId = res.node.id;
+            autoForm.password = ''; // 密码只在提交时用一次, 不在前端继续留存
             addToast('已创建节点，正在自动部署…');
             fetchData();
             if (autoPoller) clearInterval(autoPoller);

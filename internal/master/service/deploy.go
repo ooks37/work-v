@@ -61,6 +61,25 @@ func deploySetStatus(nodeID uint, status string) {
 	_ = model.DB.Model(&model.Node{}).Where("id = ?", nodeID).Update("deploy_status", status).Error
 }
 
+// deployDrop 部署结束后释放内存缓冲 (日志已落库, 由前端按需读取)
+func deployDrop(nodeID uint) {
+	deployMu.Lock()
+	delete(deployBuf, nodeID)
+	deployMu.Unlock()
+}
+
+// maskTokenInCmd 日志里不回显完整节点 Token (审计: 部署日志会被面板展示)
+func maskTokenInCmd(cmd, token string) string {
+	if token == "" {
+		return cmd
+	}
+	short := token
+	if len(short) > 12 {
+		short = short[:12] + "***"
+	}
+	return strings.ReplaceAll(cmd, token, short)
+}
+
 // isRootSession 判断远程账号是否为 root (安装脚本需要 root)
 func isRootSession(client *ssh.Client) bool {
 	session, err := client.NewSession()
@@ -103,6 +122,7 @@ func AutoDeployNode(nodeID uint, req AutoDeployRequest) {
 		start := time.Now()
 		deploySetStatus(nodeID, "running")
 		deployAppend(nodeID, fmt.Sprintf("[Work-V] 开始自动部署: %s@%s:%d\n", req.User, req.Host, req.Port))
+		defer deployDrop(nodeID)
 
 		stop := make(chan struct{})
 		go func() {
@@ -183,7 +203,7 @@ func AutoDeployNode(nodeID uint, req AutoDeployRequest) {
 		}
 
 		cmd := BuildAutoDeployCommand(req.BaseURL, node.Token)
-		deployAppend(nodeID, "[Work-V] 执行纳管命令: "+cmd+"\n\n")
+		deployAppend(nodeID, "[Work-V] 执行纳管命令: "+maskTokenInCmd(cmd, node.Token)+"\n\n")
 
 		session, err := client.NewSession()
 		if err != nil {
