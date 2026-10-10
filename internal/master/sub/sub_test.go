@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,7 +149,7 @@ func TestHandleSubscription(t *testing.T) {
 	model.DB.Create(&suspendedUser)
 
 	router := gin.New()
-	router.GET("/sub/:token", HandleSubscription)
+	router.Match([]string{"GET", "POST", "HEAD"}, "/sub/:token", HandleSubscription)
 
 	// Case 1: 不存在的 Token -> 404
 	{
@@ -285,6 +286,24 @@ func TestHandleSubscription(t *testing.T) {
 			t.Errorf("portal HTML missing clash one-click import button, got: %s", body)
 		}
 	}
+
+	// Case 8: 浏览器通过 POST 表单提交凭据解锁 (即使携带 ?logout=1 也应成功并设置 Cookie 与 303 跳转)
+	{
+		w := httptest.NewRecorder()
+		formData := url.Values{}
+		formData.Set("password", "pass1234")
+		req, _ := http.NewRequest("POST", "/sub/sub_active_token?logout=1", strings.NewReader(formData.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("expected 303 redirect for browser POST auth, got %d", w.Code)
+		}
+		cookie := w.Header().Get("Set-Cookie")
+		if !strings.Contains(cookie, "workv_sub_auth") {
+			t.Errorf("expected Set-Cookie workv_sub_auth, got: %s", cookie)
+		}
+	}
 }
 
 func TestSubscriptionIncludesNodeWithoutStoredInbounds(t *testing.T) {
@@ -407,3 +426,67 @@ func TestUniqueNameDedup(t *testing.T) {
 		}
 	}
 }
+
+func TestClashYAMLIncludesRealityInProxyGroups(t *testing.T) {
+	setupTestDB(t, "sub_clash.db")
+
+	node := model.Node{Name: "hk-reality", Token: "tok-r", Address: "1.2.3.4", Rate: 1, Status: "online"}
+	createNodeAndUser(t, &node, "u-clash")
+	service.EnsureAllNodesInbounds()
+
+	c, w := newSubContext(t, "subt", "ClashforWindows/0.20.39")
+	HandleSubscription(c)
+
+	if w.Code != 200 {
+		t.Fatalf("订阅状态码 %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "hk-reality-Reality") {
+		t.Errorf("Clash YAML 缺少 Reality 节点: %s", body)
+	}
+	// 验证 proxy-groups 里的 proxies 列表中包含该节点
+	if !strings.Contains(body, "- hk-reality-Reality") {
+		t.Errorf("Clash YAML 的 proxy-groups 列表中缺少该节点引用: %s", body)
+	}
+	// 验证不包含 anytls
+	if strings.Contains(body, "type: anytls") {
+		t.Errorf("Clash YAML 不应包含不受支持的 anytls 协议: %s", body)
+	}
+}
+
+func TestSingboxJSONTagDedup(t *testing.T) {
+	setupTestDB(t, "sub_singbox.db")
+
+	node1 := model.Node{Name: "dup-node", Token: "tok-d1", Address: "1.2.3.4", Rate: 1, Status: "online"}
+	node2 := model.Node{Name: "dup-node", Token: "tok-d2", Address: "1.2.3.5", Rate: 1, Status: "online"}
+	createNodeAndUser(t, &node1, "u-singbox")
+	model.DB.Create(&node2)
+	service.EnsureAllNodesInbounds()
+
+	c, w := newSubContext(t, "subt", "sing-box 1.13.0")
+	HandleSubscription(c)
+
+	if w.Code != 200 {
+		t.Fatalf("订阅状态码 %d", w.Code)
+	}
+	var sbConfig map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &sbConfig); err != nil {
+		t.Fatalf("Sing-box 配置反序列化失败: %v", err)
+	}
+	outbounds, ok := sbConfig["outbounds"].([]any)
+	if !ok {
+		t.Fatalf("缺少 outbounds 数组")
+	}
+	tags := make(map[string]bool)
+	for _, o := range outbounds {
+		outMap, _ := o.(map[string]any)
+		tag, _ := outMap["tag"].(string)
+		if tag != "" {
+			if tags[tag] {
+				t.Errorf("发现重复的 outbound tag: %s", tag)
+			}
+			tags[tag] = true
+		}
+	}
+}
+

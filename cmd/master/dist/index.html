@@ -449,9 +449,8 @@
                   <span class="w-2.5 h-2.5 rounded-full" :class="node.status === 'online' ? 'bg-[#34c759] ring-4 ring-[#34c759]/20' : 'bg-[#86868b]'"></span>
                   <h3 class="text-sm font-semibold text-[#1d1d1f] tracking-tight">{{ node.name }}</h3>
                   <span class="text-[10px] px-2 py-0.5 rounded-full bg-[#f2f2f7] font-mono text-[#86868b]">倍率: {{ node.rate }}x</span>
-                  <span v-if="node.hidden" class="text-[10px] px-2 py-0.5 rounded-full bg-[#ff9500]/15 text-[#ff9500] border border-[#ff9500]/25 font-medium">🙈 订阅隐藏</span>
-                  <button @click="pingNode(node)" class="text-[10px] px-2 py-0.5 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] hover:text-[#1d1d1f] font-mono transition">
-                    {{ nodeLatency[node.id] !== undefined ? nodeLatency[node.id] + 'ms' : 'Ping' }}
+                  <button @click="pingNode(node)" class="text-[10px] px-2 py-0.5 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] hover:text-[#1d1d1f] font-mono transition" title="TCP 端口与控制隧道探测 (非 ICMP)">
+                    {{ nodeLatency[node.id] !== undefined ? (nodeLatency[node.id] === 'err' ? '异常' : nodeLatency[node.id] + 'ms') : '测延时' }}
                   </button>
                 </div>
                 <div class="text-xs text-[#86868b] font-mono">
@@ -1630,9 +1629,14 @@
         const pingNode = async (node) => {
           try {
             nodeLatency[node.id] = '...';
-            const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/ping`, { method: 'POST' });
-            nodeLatency[node.id] = res.latency_ms;
-            addToast(`【${node.name}】网络探测延迟: ${res.latency_ms}ms`);
+            const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/check`, { method: 'POST' });
+            if (res.reachable) {
+              nodeLatency[node.id] = res.latency_ms;
+              addToast(`【${node.name}】${res.protocol || 'TCP'} 连通正常: ${res.latency_ms}ms`);
+            } else {
+              nodeLatency[node.id] = 'err';
+              addToast(`【${node.name}】探测不可达: ${res.message || '连接超时'}`, 'error');
+            }
           } catch (err) {
             nodeLatency[node.id] = 'err';
             addToast(`探测失败: ${err.message}`, 'error');
@@ -1984,11 +1988,36 @@
         };
 
         const copyText = (text) => {
-          navigator.clipboard.writeText(text).then(() => {
-            addToast('已复制到剪贴板');
-          }).catch(() => {
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(() => {
+              addToast('已复制到剪贴板');
+            }).catch(() => {
+              fallbackCopy(text);
+            });
+          } else {
+            fallbackCopy(text);
+          }
+        };
+
+        const fallbackCopy = (text) => {
+          try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            const successful = document.execCommand('copy');
+            document.body.removeChild(ta);
+            if (successful) {
+              addToast('已复制到剪贴板');
+            } else {
+              addToast('复制失败，请手动长按复制', 'error');
+            }
+          } catch (e) {
             addToast('复制失败，请手动长按复制', 'error');
-          });
+          }
         };
 
         // 格式化函数

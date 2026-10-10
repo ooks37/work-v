@@ -122,8 +122,8 @@ func calcSubAuthCookie(user *model.User) string {
 // 3. POST 表单参数 (password 或 pwd)
 // 4. 浏览器 Cookie (workv_sub_auth)
 func checkSubscriptionAuth(c *gin.Context, user *model.User) (isAuth bool, hasError bool) {
-	// 登出参数: 清除 Cookie 并返回未认证
-	if c.Query("logout") == "1" {
+	// 登出参数: 仅在非 POST 表单提交时清除 Cookie 并返回未认证
+	if c.Query("logout") == "1" && c.Request.Method != "POST" {
 		c.SetCookie("workv_sub_auth", "", -1, "/", "", false, true)
 		return false, false
 	}
@@ -228,6 +228,10 @@ func HandleSubscription(c *gin.Context) {
 	// 鉴权通过：若为网页请求，写入免登录 Cookie (30天有效)
 	if isBrowser {
 		c.SetCookie("workv_sub_auth", calcSubAuthCookie(&user), 86400*30, "/", "", false, true)
+		if c.Request.Method == "POST" {
+			c.Redirect(http.StatusSeeOther, fmt.Sprintf("/sub/%s", user.SubToken))
+			return
+		}
 	}
 
 	// 注入客户端标准流量信息头 (Clash / Shadowrocket 支持直显配额进度条)
@@ -236,18 +240,18 @@ func HandleSubscription(c *gin.Context) {
 	c.Header("Subscription-Userinfo", userinfo)
 	c.Header("Profile-Update-Interval", "24")
 
-	now := time.Now().Unix()
-	if user.Status != "active" || (user.ExpireAt > 0 && user.ExpireAt < now) || (user.TrafficLimit > 0 && user.UsedTraffic >= user.TrafficLimit) {
-		c.String(http.StatusForbidden, "Subscription expired or quota exceeded")
-		return
-	}
-
 	// 读取所有已配置且未删除的非隐藏节点 (过滤管理员设置的隐藏节点)
 	var nodes []model.Node
 	model.DB.Where("hidden = ?", false).Find(&nodes)
 
 	if isBrowser {
 		renderUserPortal(c, &user, nodes)
+		return
+	}
+
+	now := time.Now().Unix()
+	if user.Status != "active" || (user.ExpireAt > 0 && user.ExpireAt < now) || (user.TrafficLimit > 0 && user.UsedTraffic >= user.TrafficLimit) {
+		c.String(http.StatusForbidden, "Subscription expired or quota exceeded")
 		return
 	}
 
@@ -579,6 +583,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 					"client-fingerprint": "chrome",
 				}
 				proxies = append(proxies, p)
+				proxyNames = append(proxyNames, name)
 			case in.Type == "hysteria2":
 				name := uniqueName(usedNames, fmt.Sprintf("%s-Hy2", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
@@ -654,25 +659,6 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				}
 				proxies = append(proxies, p)
 				proxyNames = append(proxyNames, name)
-
-			case in.Type == "anytls":
-				name := uniqueName(usedNames, fmt.Sprintf("%s-AnyTLS", n.Name))
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = nodeAddr
-				}
-				p := map[string]any{
-					"name":             name,
-					"type":             "anytls",
-					"server":           nodeAddr,
-					"port":             in.ListenPort,
-					"password":         user.UUID,
-					"sni":              serverName,
-					"skip-cert-verify": true,
-					"udp":              true,
-				}
-				proxies = append(proxies, p)
-				proxyNames = append(proxyNames, name)
 			}
 		}
 	}
@@ -729,6 +715,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 	var outbounds []map[string]any
 	var outTags []string
+	usedTags := map[string]int{"direct": 1, "block": 1, "select": 1, "auto": 1}
 	protoFilter := strings.ToLower(c.Query("proto"))
 
 	for _, n := range nodes {
@@ -750,7 +737,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 			isWS := strings.Contains(strings.ToLower(in.Tag), "ws") || strings.EqualFold(in.Type, "vless-ws") || strings.EqualFold(fmt.Sprint(in.Options["transport"]), "ws")
 
 			if (in.Type == "vless" || in.Type == "grpc-reality") && isGRPC {
-				tag := fmt.Sprintf("%s-gRPC-Reality", n.Name)
+				tag := uniqueName(usedTags, fmt.Sprintf("%s-gRPC-Reality", n.Name))
 				pubKey, _ := in.Options["public_key"].(string)
 				shortID, _ := in.Options["short_id"].(string)
 				serverName, _ := in.Options["server_name"].(string)
@@ -790,7 +777,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				outTags = append(outTags, tag)
 
 			} else if (in.Type == "vless" || in.Type == "vless-ws") && isWS {
-				tag := fmt.Sprintf("%s-VLESS-WS", n.Name)
+				tag := uniqueName(usedTags, fmt.Sprintf("%s-VLESS-WS", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
 					serverName = nodeAddr
@@ -819,7 +806,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				outTags = append(outTags, tag)
 
 			} else if in.Type == "vmess" || in.Type == "vmess-ws" {
-				tag := fmt.Sprintf("%s-VMess-WS", n.Name)
+				tag := uniqueName(usedTags, fmt.Sprintf("%s-VMess-WS", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
 					serverName = nodeAddr
@@ -852,7 +839,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 			} else {
 				switch in.Type {
 				case "vless":
-					tag := fmt.Sprintf("%s-Reality", n.Name)
+					tag := uniqueName(usedTags, fmt.Sprintf("%s-Reality", n.Name))
 					pubKey, _ := in.Options["public_key"].(string)
 					shortID, _ := in.Options["short_id"].(string)
 					serverName, _ := in.Options["server_name"].(string)
@@ -885,7 +872,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					outTags = append(outTags, tag)
 
 				case "hysteria2":
-					tag := fmt.Sprintf("%s-Hy2", n.Name)
+					tag := uniqueName(usedTags, fmt.Sprintf("%s-Hy2", n.Name))
 					serverName, _ := in.Options["server_name"].(string)
 					if serverName == "" {
 						serverName = nodeAddr
@@ -907,7 +894,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					outTags = append(outTags, tag)
 
 				case "tuic":
-					tag := fmt.Sprintf("%s-TUIC", n.Name)
+					tag := uniqueName(usedTags, fmt.Sprintf("%s-TUIC", n.Name))
 					out := map[string]any{
 						"type":               "tuic",
 						"tag":                tag,
@@ -926,7 +913,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					outTags = append(outTags, tag)
 
 				case "anytls":
-					tag := fmt.Sprintf("%s-AnyTLS", n.Name)
+					tag := uniqueName(usedTags, fmt.Sprintf("%s-AnyTLS", n.Name))
 					serverName, _ := in.Options["server_name"].(string)
 					if serverName == "" {
 						serverName = "gateway.icloud.com"
@@ -947,7 +934,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					outTags = append(outTags, tag)
 
 				case "shadowsocks":
-					tag := fmt.Sprintf("%s-Shadowsocks", n.Name)
+					tag := uniqueName(usedTags, fmt.Sprintf("%s-Shadowsocks", n.Name))
 					method, _ := in.Options["method"].(string)
 					if method == "" {
 						method = "2022-blake3-aes-128-gcm"
@@ -968,7 +955,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 					outTags = append(outTags, tag)
 
 				case "trojan":
-					tag := fmt.Sprintf("%s-Trojan", n.Name)
+					tag := uniqueName(usedTags, fmt.Sprintf("%s-Trojan", n.Name))
 					serverName, _ := in.Options["server_name"].(string)
 					if serverName == "" {
 						serverName = nodeAddr
@@ -1112,7 +1099,7 @@ func renderLockPortal(c *gin.Context, user *model.User, hasError bool) {
 
     %s
 
-    <form method="POST" action="">
+    <form method="POST" action="?">
       <input type="password" name="password" placeholder="请输入凭据密码..." required autofocus class="input">
       <button type="submit" class="btn">解锁订阅与节点</button>
     </form>
@@ -1162,11 +1149,26 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 		expireStr = time.Unix(user.ExpireAt, 0).Format("2006-01-02")
 	}
 
+	now := time.Now().Unix()
+	isExpired := user.ExpireAt > 0 && user.ExpireAt < now
+	isOverQuota := user.TrafficLimit > 0 && user.UsedTraffic >= user.TrafficLimit
+	isSuspended := user.Status != "active" || isExpired || isOverQuota
+
 	statusBadge := `<span style="background:rgba(52,199,89,0.12);color:#34c759;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🟢 活跃正常</span>`
-	if user.Status == "suspended" {
+	var alertBanner string
+	progressColor := "linear-gradient(90deg, #34c759, #30b0c7)"
+	if user.Status == "suspended" || isOverQuota {
 		statusBadge = `<span style="background:rgba(255,59,48,0.12);color:#ff3b30;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🔴 流量熔断</span>`
-	} else if user.Status == "expired" {
+		alertBanner = `<div style="background:rgba(255,59,48,0.08);border:1px solid rgba(255,59,48,0.25);border-radius:14px;padding:12px 16px;margin-bottom:16px;color:#ff3b30;font-size:12px;line-height:1.5;"><strong>⚠️ 流量已熔断:</strong> 您的已用流量已超出配额上限，代理节点服务已暂停。如需恢复请联系管理员提升配额。</div>`
+		progressColor = "#ff3b30"
+	} else if user.Status == "expired" || isExpired {
 		statusBadge = `<span style="background:rgba(255,149,0,0.12);color:#ff9500;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🟡 账号已过期</span>`
+		alertBanner = `<div style="background:rgba(255,149,0,0.08);border:1px solid rgba(255,149,0,0.25);border-radius:14px;padding:12px 16px;margin-bottom:16px;color:#ff9500;font-size:12px;line-height:1.5;"><strong>⚠️ 账号已过期:</strong> 您的订阅有效期已届满，节点服务已停止。如需续期请联系管理员。</div>`
+		progressColor = "#ff9500"
+	} else if user.Status != "active" {
+		statusBadge = `<span style="background:rgba(255,59,48,0.12);color:#ff3b30;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;">🔴 账号停用</span>`
+		alertBanner = `<div style="background:rgba(255,59,48,0.08);border:1px solid rgba(255,59,48,0.25);border-radius:14px;padding:12px 16px;margin-bottom:16px;color:#ff3b30;font-size:12px;line-height:1.5;"><strong>⚠️ 账号已停用:</strong> 该账户当前已被管理员禁用，请联系管理员核实。</div>`
+		progressColor = "#ff3b30"
 	}
 
 	clashTargetURL := subBase + "?type=clash"
@@ -1231,7 +1233,9 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 	}
 
 	nodesSectionHTML := ""
-	if totalSingleLinks > 0 {
+	if isSuspended {
+		nodesSectionHTML = `<div style="margin-top:24px;border-top:1px solid rgba(0,0,0,0.06);padding-top:20px;text-align:center;color:#ff3b30;font-size:12px;font-weight:600;">🚫 账号当前已熔断或过期，节点连接已下线</div>`
+	} else if totalSingleLinks > 0 {
 		nodesSectionHTML = fmt.Sprintf(`
     <div style="margin-top:24px;border-top:1px solid rgba(0,0,0,0.06);padding-top:20px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -1263,7 +1267,7 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
     .title { font-size: 20px; font-weight: 700; color: #1d1d1f; display: flex; align-items: center; gap: 8px; letter-spacing: -0.02em; }
     .stat-box { background: #f2f2f7; border: 1px solid rgba(0, 0, 0, 0.04); border-radius: 18px; padding: 18px; margin-bottom: 18px; }
     .progress-bar { width: 100%%; height: 8px; background: #e5e5ea; border-radius: 999px; overflow: hidden; margin: 12px 0 8px 0; }
-    .progress-fill { height: 100%%; background: linear-gradient(90deg, #34c759, #30b0c7); border-radius: 999px; width: %.1f%%%%; transition: width 0.3s; }
+    .progress-fill { height: 100%%; border-radius: 999px; transition: width 0.3s; }
     .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
     .btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 12px 14px; border-radius: 14px; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; }
     .btn-clash { background: rgba(0, 113, 227, 0.08); color: #0071e3; border-color: rgba(0, 113, 227, 0.2); }
@@ -1293,13 +1297,15 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
       </div>
     </div>
 
+    %s
+
     <div class="stat-box">
       <div style="display:flex;justify-content:space-between;font-size:13px;color:#86868b;">
         <span>用户: <strong style="color:#1d1d1f;">%s</strong></span>
         <span>有效期至: <strong style="color:#1d1d1f;">%s</strong></span>
       </div>
       <div class="progress-bar">
-        <div class="progress-fill"></div>
+        <div class="progress-fill" style="background:%s;width:%.1f%%%%;"></div>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:12px;color:#86868b;">
         <span>已用流量: <strong style="color:#34c759;">%s</strong></span>
@@ -1389,7 +1395,7 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
     }
   </script>
 </body>
-</html>`, percent, statusBadge, user.Username, expireStr, usedStr, limitStr, percent, user.Password, user.Password, clashURL, singboxURL, srURL, subWithPwd, clashTargetURL, singboxTargetURL, subWithPwd, url.QueryEscape(subWithPwd), nodesSectionHTML)
+</html>`, statusBadge, alertBanner, user.Username, expireStr, progressColor, percent, usedStr, limitStr, percent, user.Password, user.Password, clashURL, singboxURL, srURL, subWithPwd, clashTargetURL, singboxTargetURL, subWithPwd, url.QueryEscape(subWithPwd), nodesSectionHTML)
 
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, htmlContent)

@@ -254,6 +254,19 @@ type ProtocolShareLink struct {
 	Description string `json:"description"` // 协议特性说明
 }
 
+// NormalizeRealityKey 归一化 Reality 公钥 (支持 64 位 hex 与 base64url)
+func NormalizeRealityKey(k string) string {
+	k = strings.TrimSpace(k)
+	if len(k) != 64 {
+		return k
+	}
+	raw, err := hex.DecodeString(k)
+	if err != nil {
+		return k
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
 // GenerateNodeShareLinks 为指定节点与用户生成所有已启用协议的分享链接
 func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []ProtocolShareLink {
 	if node.Address == "" || node.Address == "自动探测" {
@@ -297,7 +310,7 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 				svcName = "grpc-service"
 			}
 			link := fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=grpc&serviceName=%s#%s",
-				userUUID, node.Address, in.ListenPort, serverName, pubKey, shortID, svcName, fmt.Sprintf("%s-gRPC-Reality", node.Name))
+				userUUID, node.Address, in.ListenPort, serverName, NormalizeRealityKey(pubKey), shortID, svcName, url.QueryEscape(fmt.Sprintf("%s-gRPC-Reality", node.Name)))
 			links = append(links, ProtocolShareLink{
 				Protocol:    "grpc-reality",
 				Name:        fmt.Sprintf("%s (gRPC Reality)", node.Name),
@@ -369,7 +382,7 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 				serverName = "gateway.icloud.com"
 			}
 			link := fmt.Sprintf("vless://%s@%s:%d?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#%s",
-				userUUID, node.Address, in.ListenPort, serverName, pubKey, shortID, fmt.Sprintf("%s-Reality", node.Name))
+				userUUID, node.Address, in.ListenPort, serverName, NormalizeRealityKey(pubKey), shortID, url.QueryEscape(fmt.Sprintf("%s-Reality", node.Name)))
 			links = append(links, ProtocolShareLink{
 				Protocol:    "vless-reality",
 				Name:        fmt.Sprintf("%s (VLESS Reality)", node.Name),
@@ -397,7 +410,7 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 
 		case in.Type == "tuic":
 			link := fmt.Sprintf("tuic://%s:%s@%s:%d?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#%s",
-				userUUID, userUUID, node.Address, in.ListenPort, fmt.Sprintf("%s-TUIC", node.Name))
+				userUUID, userUUID, node.Address, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-TUIC", node.Name)))
 			links = append(links, ProtocolShareLink{
 				Protocol:    "tuic",
 				Name:        fmt.Sprintf("%s (TUIC v5)", node.Name),
@@ -413,7 +426,7 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 				serverName = "gateway.icloud.com"
 			}
 			link := fmt.Sprintf("anytls://%s@%s:%d/?sni=%s&insecure=1#%s",
-				userUUID, node.Address, in.ListenPort, serverName, fmt.Sprintf("%s-AnyTLS", node.Name))
+				userUUID, node.Address, in.ListenPort, serverName, url.QueryEscape(fmt.Sprintf("%s-AnyTLS", node.Name)))
 			links = append(links, ProtocolShareLink{
 				Protocol:    "anytls",
 				Name:        fmt.Sprintf("%s (AnyTLS)", node.Name),
@@ -543,8 +556,8 @@ func RecordTraffic(nodeID uint, users []common.UserDeltaTraffic) {
 			continue
 		}
 
-		// 检查是否达到流量限制，触发秒级熔断
-		if u.TrafficLimit > 0 && u.UsedTraffic >= u.TrafficLimit {
+		// 检查是否达到流量限制，触发秒级熔断 (仅首次从未熔断转为熔断时触发全网下发与广播)
+		if u.TrafficLimit > 0 && u.UsedTraffic >= u.TrafficLimit && u.Status != "suspended" {
 			model.DB.Model(&u).Update("status", "suspended")
 			log.Printf("[Quota] 用户 %s 流量超标 (已用: %d / 上限: %d)，触发全网秒级熔断!", u.Username, u.UsedTraffic, u.TrafficLimit)
 			hub.GlobalHub.BroadcastCutoffUser(u.UUID)
@@ -656,6 +669,29 @@ func ResetAllUsersTraffic() error {
 	}
 
 	// 触发全网节点更新配置
+	var nodes []model.Node
+	model.DB.Find(&nodes)
+	for _, n := range nodes {
+		go hub.GlobalHub.PushConfigToNode(n.ID)
+	}
+	return nil
+}
+
+// ResetUserTraffic 一键重置单用户的已用流量并恢复状态
+func ResetUserTraffic(userID uint) error {
+	var u model.User
+	if err := model.DB.First(&u, userID).Error; err != nil {
+		return err
+	}
+	updates := map[string]any{"used_traffic": 0}
+	if u.Status == "suspended" {
+		updates["status"] = "active"
+	}
+	if err := model.DB.Model(&u).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	// 触发全网节点更新配置 (恢复该用户的凭据)
 	var nodes []model.Node
 	model.DB.Find(&nodes)
 	for _, n := range nodes {

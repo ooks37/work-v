@@ -822,7 +822,7 @@ func HandleGetNodeLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"logs": logs})
 }
 
-// HandlePingNode 主控端对目标节点发起 TCP 连通性与延迟探测
+// HandlePingNode 主控端对目标节点发起 TCP / 隧道连通性与延迟探测 (零 ICMP Ping 依赖，避免服务器禁 ping 误报)
 func HandlePingNode(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	var node model.Node
@@ -831,44 +831,62 @@ func HandlePingNode(c *gin.Context) {
 		return
 	}
 
+	isOnline := hub.GlobalHub.IsNodeOnline(node.ID)
 	addr := strings.TrimSpace(node.Address)
-	if addr == "" || addr == "自动探测" || addr == "127.0.0.1" {
-		c.JSON(http.StatusOK, gin.H{"reachable": false, "latency_ms": 0, "message": "节点未上报有效公网 IP"})
+	if (addr == "" || addr == "自动探测" || addr == "127.0.0.1") && !isOnline {
+		c.JSON(http.StatusOK, gin.H{"reachable": false, "latency_ms": 0, "message": "节点未上报有效公网 IP 且未在线"})
 		return
 	}
 
-	port := 2083
+	// 1. 优先挑选支持 TCP 握手的入站端口 (过滤掉纯 UDP 的 hysteria2 与 tuic)
+	var tcpPort int
 	var inbounds []common.InboundConfig
 	if err := json.Unmarshal([]byte(node.InboundsJSON), &inbounds); err == nil {
 		for _, in := range inbounds {
 			if in.Enabled && in.ListenPort > 0 {
-				port = in.ListenPort
-				break
+				isUDPOnly := in.Type == "hysteria2" || in.Type == "tuic"
+				if !isUDPOnly && tcpPort == 0 {
+					tcpPort = in.ListenPort
+					break
+				}
 			}
 		}
 	}
 
-	target := net.JoinHostPort(addr, strconv.Itoa(port))
-	start := time.Now()
-	conn, err := net.DialTimeout("tcp", target, 3*time.Second)
-	latency := time.Since(start).Milliseconds()
+	// 2. 若存在有效地址与 TCP 入站端口，发起原生 TCP 握手探测 (零 ICMP)
+	if addr != "" && addr != "自动探测" && tcpPort > 0 {
+		target := net.JoinHostPort(addr, strconv.Itoa(tcpPort))
+		start := time.Now()
+		conn, err := net.DialTimeout("tcp", target, 2500*time.Millisecond)
+		latency := time.Since(start).Milliseconds()
+		if err == nil {
+			_ = conn.Close()
+			c.JSON(http.StatusOK, gin.H{
+				"reachable":  true,
+				"latency_ms": latency,
+				"target":     target,
+				"protocol":   "TCP",
+				"message":    fmt.Sprintf("TCP 握手连通正常 (%dms)", latency),
+			})
+			return
+		}
+	}
 
-	if err != nil {
+	// 3. 若 TCP 端口未开放或仅开启 UDP 协议，但 Agent 长连在 Hub 中在线
+	if isOnline {
 		c.JSON(http.StatusOK, gin.H{
-			"reachable":  false,
-			"latency_ms": latency,
-			"target":     target,
-			"message":    fmt.Sprintf("TCP 握手失败: %v", err),
+			"reachable":  true,
+			"latency_ms": 1,
+			"protocol":   "WebSocket",
+			"message":    "控制隧道在线活跃",
 		})
 		return
 	}
-	_ = conn.Close()
 
 	c.JSON(http.StatusOK, gin.H{
-		"reachable":  true,
-		"latency_ms": latency,
-		"target":     target,
-		"message":    "连接正常",
+		"reachable":  false,
+		"latency_ms": 0,
+		"message":    "TCP 端口与控制隧道均无法连通 (服务器离线或防火墙阻断)",
 	})
 }
 
@@ -899,6 +917,20 @@ func HandleBatchResetTraffic(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "全网用户流量已成功清零，状态已重置为正常"})
+}
+
+// HandleResetSingleUserTraffic 单个用户流量清零
+func HandleResetSingleUserTraffic(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的用户 ID"})
+		return
+	}
+	if err := service.ResetUserTraffic(uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "用户已用流量已成功清零，状态已恢复正常"})
 }
 
 // HandleRegenerateUserCredentials 重置用户凭据与订阅 Token

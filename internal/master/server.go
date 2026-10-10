@@ -179,8 +179,10 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			admin.PUT("/nodes/:id/inbounds", api.HandleUpdateNodeInbounds)
 			admin.GET("/generate-reality-keys", api.HandleGenerateRealityKeys)
 			admin.POST("/nodes/:id/restart", api.HandleRestartNodeSingbox)
+			admin.POST("/nodes/:id/restart-singbox", api.HandleRestartNodeSingbox) // 兼容前端别名
 			admin.GET("/nodes/:id/logs", api.HandleGetNodeLogs)
 			admin.POST("/nodes/:id/ping", api.HandlePingNode)
+			admin.POST("/nodes/:id/check", api.HandlePingNode) // 语义化探测别名 (非 ICMP ping)
 
 			// 一键自动部署 (SSH 纳管) 与进度查询
 			admin.POST("/auto-deploy", api.HandleAutoDeployNode)
@@ -189,6 +191,8 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			// sing-box 内核管理与在线升级 (借鉴 iwantrun 最佳实践)
 			admin.GET("/singbox/version", api.HandleGetSingboxVersion)
 			admin.POST("/singbox/upgrade", api.HandleUpgradeSingbox)
+			admin.GET("/system/singbox-version", api.HandleGetSingboxVersion) // 兼容前端别名
+			admin.POST("/system/upgrade-singbox", api.HandleUpgradeSingbox)   // 兼容前端别名
 
 			// 系统开放端口、综合诊断与系统配置
 			admin.GET("/system/ports", api.HandleGetOpenPorts)
@@ -201,7 +205,10 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			admin.GET("/users", api.HandleGetUsers)
 			admin.POST("/users", api.HandleCreateUser)
 			admin.POST("/users/batch", api.HandleBatchCreateUsers)
+			admin.POST("/users/batch-create", api.HandleBatchCreateUsers) // 兼容前端别名
 			admin.POST("/users/reset-all", api.HandleBatchResetTraffic)
+			admin.POST("/users/batch-reset-traffic", api.HandleBatchResetTraffic) // 兼容前端别名
+			admin.POST("/users/:id/reset-traffic", api.HandleResetSingleUserTraffic) // 单用户重置流量
 			admin.PUT("/users/:id", api.HandleUpdateUser)
 			admin.DELETE("/users/:id", api.HandleDeleteUser)
 			admin.POST("/users/:id/regenerate", api.HandleRegenerateUserCredentials)
