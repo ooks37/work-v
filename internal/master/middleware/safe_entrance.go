@@ -136,10 +136,35 @@ func SetSafeEntranceCookie(c *gin.Context) {
 	c.SetCookie(SafeCookieName, computeSafeEntryToken(safePath), entranceCookieMaxAge, "/", "", isHTTPS, true)
 }
 
-// HandleSafeEntryVisit 当访问配置的安全入口时，种入专属凭据并跳转到控制台
+var (
+	indexHTMLHandlerMu sync.RWMutex
+	indexHTMLHandler   func(c *gin.Context)
+)
+
+// SetIndexHTMLHandler 注入直接渲染 index.html 的处理器
+func SetIndexHTMLHandler(h func(c *gin.Context)) {
+	indexHTMLHandlerMu.Lock()
+	defer indexHTMLHandlerMu.Unlock()
+	indexHTMLHandler = h
+}
+
+// ServeIndexHTML 向当前响应直接输出 index.html 控制台页面
+func ServeIndexHTML(c *gin.Context) {
+	indexHTMLHandlerMu.RLock()
+	h := indexHTMLHandler
+	indexHTMLHandlerMu.RUnlock()
+	if h != nil {
+		h(c)
+		return
+	}
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, `<!DOCTYPE html><html><body><div id="app">Work-V Console</div></body></html>`)
+}
+
+// HandleSafeEntryVisit 当访问配置的安全入口时，种入专属凭据并原地渲染控制台登录页，绝不跳转
 func HandleSafeEntryVisit(c *gin.Context) {
 	SetSafeEntranceCookie(c)
-	c.Redirect(http.StatusFound, "/")
+	ServeIndexHTML(c)
 }
 
 // BaotaSafeEntranceHTML 类似宝塔面板安全入口拦截提示页面
@@ -297,18 +322,14 @@ func SafeEntranceFilter() gin.HandlerFunc {
 
 		path := c.Request.URL.Path
 
-		// 1. 如果访问的是安全路径 (支持带或不带结尾斜杠)，直接执行入口解锁处理
+		// 1. 如果访问的是安全路径 (支持带或不带结尾斜杠)，直接就地提供控制台登录页与面板，绝不 302 跳转
 		if strings.TrimSuffix(path, "/") == strings.TrimSuffix(safePath, "/") {
 			HandleSafeEntryVisit(c)
 			c.Abort()
 			return
 		}
 
-		// 2. 静态资源只放行"已经登记在册的根目录文件" (tailwind.js / vue.global.prod.js 等),
-		//    绝不可按后缀放行! 历史实现用 HasSuffix(path, ".js") 之类的判断,
-		//    于是任何以这些后缀结尾的请求都会跳过安全入口:
-		//      - 未授权访问 /x.js 会直接拿到面板 HTML (NoRoute 回落 index.html);
-		//      - /api/v1/admin/nodes/1.js 这类带 :id 的管理接口也能绕过入口校验。
+		// 2. 静态资源只放行"已经登记在册的根目录文件" (tailwind.js / vue.global.prod.js 等)
 		if IsAllowedStaticAsset(path) {
 			c.Next()
 			return
@@ -321,20 +342,30 @@ func SafeEntranceFilter() gin.HandlerFunc {
 			return
 		}
 
-		expectedToken := computeSafeEntryToken(safePath)
+		// 4. 根路径及 /index.html 拦截:
+		// 用户明确要求：必须安全路径才能登录口！做成跳转不仅暴露根路径，而且不符合实际使用体验。
+		// 当开启安全入口时，直接访问根路径 / 或 /index.html 永远展示拦截提示页，绝不展示登录口！
+		if path == "/" || path == "/index.html" {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.Header("Server", "nginx")
+			c.String(http.StatusOK, BaotaSafeEntranceHTML)
+			c.Abort()
+			return
+		}
 
-		// 4. 检查是否持有授权 Cookie
+		// 5. 检查是否持有授权 Cookie 或安全入口请求头 (保障安全入口下的 SPA API 请求放行)
+		expectedToken := computeSafeEntryToken(safePath)
 		cookieVal, err := c.Cookie(SafeCookieName)
-		if err == nil && cookieVal == expectedToken {
+		hasValidCookie := err == nil && cookieVal == expectedToken
+		hasValidHeader := strings.TrimSuffix(c.GetHeader("X-Safe-Entrance"), "/") == strings.TrimSuffix(safePath, "/") ||
+			strings.Contains(c.GetHeader("Referer"), safePath)
+
+		if hasValidCookie || hasValidHeader {
 			c.Next()
 			return
 		}
 
-		// 5. 已移除 ?safe_key= 形式的"URL 带密钥登录":
-		//    它会把入口凭据写进 nginx 访问日志/浏览器历史/Referer, 等于把安全入口泄露出去。
-		//    入口路径本身是 16 位随机 hex (2^64 空间), 暴力枚举不可行, 因此只保留 Cookie 认证。
-
-		// 7. 未授权访问拦截：API 返回 403 JSON，浏览器展示类似宝塔安全入口提示页
+		// 6. 未授权访问拦截：API 返回 403 JSON，浏览器展示类似宝塔安全入口提示页
 		if strings.HasPrefix(path, "/api/") {
 			c.JSON(http.StatusForbidden, gin.H{"error": "安全入口拦截：请先通过正确的安全入口访问"})
 			c.Abort()

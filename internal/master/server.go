@@ -211,6 +211,24 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 		// 登记根目录下的静态资源, 只有这些文件允许在未通过安全入口时访问
 		middleware.SetAllowedStaticAssets(scanStaticAssets(webDistFS))
 
+		// 注入直接输出 index.html 的渲染器，确保安全路径访问时直接就地渲染面板，无需跳转
+		middleware.SetIndexHTMLHandler(func(c *gin.Context) {
+			f, err := webDistFS.Open("/index.html")
+			if err != nil {
+				c.String(http.StatusInternalServerError, "index.html not found")
+				return
+			}
+			defer f.Close()
+			stat, err := f.Stat()
+			if err != nil {
+				c.String(http.StatusInternalServerError, "stat index.html error")
+				return
+			}
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			http.ServeContent(c.Writer, c.Request, "index.html", stat.ModTime(), f)
+		})
+
 		fileServer := http.FileServer(webDistFS)
 		r.NoRoute(func(c *gin.Context) {
 			path := c.Request.URL.Path

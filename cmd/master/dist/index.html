@@ -1428,6 +1428,9 @@
           if (token.value) {
             options.headers['Authorization'] = 'Bearer ' + token.value;
           }
+          if (window.location.pathname && window.location.pathname !== '/') {
+            options.headers['X-Safe-Entrance'] = window.location.pathname;
+          }
           const res = await fetch(url, options);
           if (res.status === 401) {
             logout();
@@ -1444,9 +1447,13 @@
         const handleLogin = async () => {
           loginLoading.value = true;
           try {
+            const loginHeaders = { 'Content-Type': 'application/json' };
+            if (window.location.pathname && window.location.pathname !== '/') {
+              loginHeaders['X-Safe-Entrance'] = window.location.pathname;
+            }
             const res = await fetch('/api/v1/auth/login', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: loginHeaders,
               body: JSON.stringify(loginForm)
             });
             const data = await res.json();
@@ -1723,6 +1730,9 @@
             });
             Object.assign(safeEntrance, res);
             showSafeModal.value = false;
+            if (res.safe_path) {
+              window.history.replaceState({}, '', res.safe_path);
+            }
             addToast(res.message || '安全路径已更新');
           } catch (err) {
             addToast(err.message, 'error');

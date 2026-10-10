@@ -63,12 +63,15 @@ func do(t *testing.T, r *gin.Engine, method, path string, cookies []*http.Cookie
 	return w
 }
 
-// entranceCookie 走真实流程访问安全入口, 取回服务端下发的凭证 Cookie
+// entranceCookie 走真实流程访问安全入口, 取回服务端下发的凭证 Cookie (绝不发生 302 重定向)
 func entranceCookie(t *testing.T, r *gin.Engine, safePath string) *http.Cookie {
 	t.Helper()
 	w := do(t, r, "GET", safePath, nil, "")
-	if w.Code != http.StatusFound {
-		t.Fatalf("访问安全入口 %s 期望 302, 实际 %d", safePath, w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("访问安全入口 %s 期望 200, 实际 %d", safePath, w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "id=\"app\"") {
+		t.Fatalf("访问安全入口 %s 未就地输出控制台页面 HTML", safePath)
 	}
 	for _, c := range w.Result().Cookies() {
 		if c.Name == "workv_entrance_token" && c.Value != "" {
@@ -121,18 +124,28 @@ func TestSafeEntranceStillServesStaticAssets(t *testing.T) {
 	}
 }
 
-// 持有入口 Cookie 时面板必须正常可访问。
-func TestSafeEntranceAllowsPanelWithCookie(t *testing.T) {
+// 开启安全入口时，根路径必须拦截且必须通过安全入口访问控制台；关闭安全入口后根路径正常放行。
+func TestSafeEntranceBlocksRootAndDirectlyServesSafePath(t *testing.T) {
 	r, safePath := newTestServer(t)
 	cookie := entranceCookie(t, r, safePath)
 
-	w := do(t, r, "GET", "/", []*http.Cookie{cookie}, "")
-	body := w.Body.String()
-	if w.Code != http.StatusOK || !strings.Contains(body, "id=\"app\"") {
-		t.Errorf("持有效入口 Cookie 访问 / 失败: status=%d", w.Code)
+	// 1. 开启安全入口时，直接访问根路径 / 永远展示拦截提示页，绝不展示登录口
+	wRoot := do(t, r, "GET", "/", []*http.Cookie{cookie}, "")
+	if !strings.Contains(wRoot.Body.String(), blockPageMark) {
+		t.Errorf("开启安全入口时根路径未被拦截")
 	}
-	if strings.Contains(body, blockPageMark) {
-		t.Errorf("持有效入口 Cookie 仍被拦截")
+
+	// 2. 访问安全路径本身直接渲染控制台页面 (包含 id="app")
+	wSafe := do(t, r, "GET", safePath, []*http.Cookie{cookie}, "")
+	if wSafe.Code != http.StatusOK || !strings.Contains(wSafe.Body.String(), "id=\"app\"") {
+		t.Errorf("访问安全入口页面失败: status=%d", wSafe.Code)
+	}
+
+	// 3. 关闭安全入口后，根路径正常直出控制台
+	middleware.SetSafePath("")
+	wOpen := do(t, r, "GET", "/", nil, "")
+	if wOpen.Code != http.StatusOK || !strings.Contains(wOpen.Body.String(), "id=\"app\"") {
+		t.Errorf("关闭安全入口后访问根路径失败: status=%d", wOpen.Code)
 	}
 }
 
@@ -243,13 +256,13 @@ func TestSetSafeEntranceRefreshesCurrentCookie(t *testing.T) {
 	if w2 := do(t, r, "GET", "/", []*http.Cookie{cookie}, ""); !strings.Contains(w2.Body.String(), blockPageMark) {
 		t.Errorf("旧路径的入口凭证在改路径后仍然有效")
 	}
-	// 新 Cookie 必须可用
-	if w3 := do(t, r, "GET", "/", []*http.Cookie{issued}, ""); !strings.Contains(w3.Body.String(), "id=\"app\"") {
-		t.Errorf("新换发的入口凭证不可用: status=%d", w3.Code)
+	// 根路径必须依然拦截 (绝不因为有新 Cookie 就开放根路径登录口)
+	if w3 := do(t, r, "GET", "/", []*http.Cookie{issued}, ""); !strings.Contains(w3.Body.String(), blockPageMark) {
+		t.Errorf("新 Cookie 访问根路径仍应被拦截, 必须通过安全入口访问")
 	}
-	// 新入口路径本身可用
-	if w4 := do(t, r, "GET", "/my_secret", nil, ""); w4.Code != http.StatusFound {
-		t.Errorf("新安全入口路径不可用: status=%d", w4.Code)
+	// 新入口路径本身直接可用 (返回 200 OK 且直出面板 HTML，绝不跳转)
+	if w4 := do(t, r, "GET", "/my_secret", nil, ""); w4.Code != http.StatusOK || !strings.Contains(w4.Body.String(), "id=\"app\"") {
+		t.Errorf("新安全入口路径不可用: status=%d body=%.80s", w4.Code, w4.Body.String())
 	}
 }
 
