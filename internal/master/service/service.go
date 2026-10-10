@@ -75,12 +75,11 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 	for _, p := range enabledProtocols {
 		protoMap[strings.ToLower(strings.TrimSpace(p))] = true
 	}
-	// 若未指定任何协议，默认启用 4 大主流高速协议
+	// 若未指定任何协议，默认仅启用高隐蔽协议 (VLESS-WS 与 VLESS-Reality)
 	if len(enabledProtocols) == 0 {
+		protoMap["vless-ws"] = true
 		protoMap["vless"] = true
-		protoMap["hysteria2"] = true
 		protoMap["grpc-reality"] = true
-		protoMap["tuic"] = true
 	}
 
 	inbounds := []common.InboundConfig{

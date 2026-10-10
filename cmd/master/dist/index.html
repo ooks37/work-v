@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -14,27 +14,27 @@
   <script>
     if (window.tailwind) {
       tailwind.config = {
-        darkMode: 'class',
+        darkMode: false,
         theme: {
           extend: {
             colors: {
               apple: {
-                bg: '#000000',
-                surface: '#1c1c1e',
-                surfaceHover: '#2c2c2e',
-                surfaceElevated: '#242426',
-                border: 'rgba(255, 255, 255, 0.08)',
-                borderStrong: 'rgba(255, 255, 255, 0.16)',
-                blue: '#0a84ff',
-                blueHover: '#0071e3',
-                green: '#30d158',
-                orange: '#ff9f0a',
-                red: '#ff453a',
-                purple: '#bf5af2',
-                teal: '#64d2ff',
-                text: '#f5f5f7',
+                bg: '#f5f5f7',
+                card: '#ffffff',
+                cardHover: '#fafafa',
+                subtle: '#f2f2f7',
+                border: 'rgba(0, 0, 0, 0.08)',
+                borderStrong: 'rgba(0, 0, 0, 0.16)',
+                blue: '#0071e3',
+                blueHover: '#0077ed',
+                green: '#34c759',
+                orange: '#ff9500',
+                red: '#ff3b30',
+                purple: '#af52de',
+                teal: '#30b0c7',
+                text: '#1d1d1f',
                 subtext: '#86868b',
-                tertiary: '#48484a'
+                tertiary: '#c7c7cc'
               }
             },
             fontFamily: {
@@ -53,7 +53,6 @@
                 'Menlo',
                 'Monaco',
                 'Consolas',
-                '"Liberation Mono"',
                 'monospace'
               ]
             }
@@ -71,33 +70,33 @@
   </script>
   <style>
     body {
-      background-color: #000000;
-      color: #f5f5f7;
+      background-color: #f5f5f7;
+      color: #1d1d1f;
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", sans-serif;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
-      letter-spacing: -0.011em;
+      letter-spacing: -0.012em;
     }
 
-    /* 苹果级超薄毛玻璃质感 */
+    /* 苹果纯白清爽毛玻璃质感 */
     .apple-glass {
-      background: rgba(28, 28, 30, 0.72);
-      backdrop-filter: blur(24px) saturate(180%);
-      -webkit-backdrop-filter: blur(24px) saturate(180%);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    .apple-glass-card {
-      background: rgba(28, 28, 30, 0.65);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(0, 0, 0, 0.08);
     }
     .apple-card {
-      background: #1c1c1e;
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: #ffffff;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+    }
+    .apple-sheet {
+      background: #ffffff;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.12);
     }
 
-    /* 苹果风格自适应滚动条 */
+    /* 苹果风格超细淡灰滚动条 */
     ::-webkit-scrollbar {
       width: 6px;
       height: 6px;
@@ -106,88 +105,86 @@
       background: transparent;
     }
     ::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.15);
+      background: rgba(0, 0, 0, 0.18);
       border-radius: 9999px;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: rgba(255, 255, 255, 0.3);
+      background: rgba(0, 0, 0, 0.32);
     }
 
-    /* iOS 物理弹簧过渡 */
     .apple-spring {
-      transition: all 0.24s cubic-bezier(0.25, 1, 0.5, 1);
+      transition: all 0.22s cubic-bezier(0.25, 1, 0.5, 1);
     }
     .apple-press:active {
-      transform: scale(0.97);
+      transform: scale(0.975);
     }
 
-    /* 原生复选与单选外观隐藏 */
     input[type="checkbox"], input[type="radio"] {
-      accent-color: #0a84ff;
+      accent-color: #0071e3;
     }
   </style>
 </head>
-<body class="min-h-screen bg-black text-[#f5f5f7] selection:bg-apple-blue selection:text-white pb-12">
+<body class="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] selection:bg-[#0071e3] selection:text-white pb-12">
   <div id="app" v-cloak class="min-h-screen flex flex-col">
 
-    <!-- 提示框 Toast (iOS 风格灵动顶栏通知) -->
+    <!-- 顶部 iOS 灵动药丸 Toast 浮窗 -->
     <div class="fixed top-5 inset-x-0 z-50 flex flex-col items-center pointer-events-none space-y-2 px-4">
       <div 
         v-for="t in toasts" 
         :key="t.id" 
-        class="pointer-events-auto px-4 py-2.5 rounded-full text-xs font-medium shadow-2xl flex items-center gap-2 border apple-spring"
-        :class="t.type === 'error' ? 'bg-[#ff453a]/20 text-[#ff453a] border-[#ff453a]/30 backdrop-blur-xl' : 'bg-[#1c1c1e]/90 text-white border-white/10 backdrop-blur-2xl'"
+        class="pointer-events-auto px-4 py-2.5 rounded-full text-xs font-medium shadow-lg flex items-center gap-2 border apple-spring"
+        :class="t.type === 'error' ? 'bg-[#ff3b30]/10 text-[#ff3b30] border-[#ff3b30]/25 backdrop-blur-xl' : 'bg-white/95 text-[#1d1d1f] border-black/10 backdrop-blur-xl shadow-black/5'"
       >
         <span v-if="t.type === 'error'">✕</span>
-        <span v-else class="text-apple-blue">✓</span>
+        <span v-else class="text-[#0071e3]">✓</span>
         <span>{{ t.message }}</span>
       </div>
     </div>
 
-    <!-- 登录视图 (Apple ID 极简授信卡片风格) -->
-    <div v-if="!isLoggedIn" class="min-h-screen flex flex-col items-center justify-center p-4 relative">
-      <div class="w-full max-w-[390px] apple-glass rounded-[28px] p-8 shadow-2xl border border-white/10 apple-spring relative z-10" :class="{'translate-x-1 duration-75': loginShake}">
-        <!-- 苹果徽标风格中枢图标 -->
+    <!-- 登录视图 (Apple 纯白极简认证卡片) -->
+    <div v-if="!isLoggedIn" class="min-h-screen flex flex-col items-center justify-center p-4">
+      <div class="w-full max-w-[390px] bg-white rounded-[28px] p-8 shadow-[0_12px_44px_rgba(0,0,0,0.06)] border border-black/[0.08] apple-spring relative" :class="{'translate-x-1 duration-75': loginShake}">
+        <!-- 苹果银白徽标中枢图标 -->
         <div class="flex justify-center mb-6">
-          <div class="w-16 h-16 rounded-2xl bg-gradient-to-b from-[#2c2c2e] to-[#1c1c1e] border border-white/10 flex items-center justify-center shadow-lg">
-            <svg class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <div class="w-16 h-16 rounded-2xl bg-gradient-to-b from-[#ffffff] to-[#f2f2f7] border border-black/[0.08] flex items-center justify-center shadow-sm">
+            <svg class="w-8 h-8 text-[#1d1d1f]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
             </svg>
           </div>
         </div>
 
         <div class="text-center mb-7">
-          <h1 class="text-xl font-semibold tracking-tight text-white">Work-V 管理台</h1>
-          <p class="text-xs text-apple-subtext mt-1.5 font-normal">输入管理员凭证以授权访问分布式集群</p>
+          <h1 class="text-xl font-semibold tracking-tight text-[#1d1d1f]">Work-V 控制台</h1>
+          <p class="text-xs text-[#86868b] mt-1.5 font-normal">使用管理员账号登录分布式管理中枢</p>
         </div>
 
         <form @submit.prevent="handleLogin" class="space-y-4">
-          <!-- iOS Grouped 输入框 -->
-          <div class="rounded-2xl bg-[#2c2c2e]/70 border border-white/10 overflow-hidden divide-y divide-white/5">
+          <!-- iOS Grouped 白色微底输入框 -->
+          <div class="rounded-2xl bg-[#f2f2f7] border border-black/[0.06] overflow-hidden divide-y divide-black/[0.06]">
             <div class="px-4 py-3">
-              <label class="block text-[10px] font-semibold tracking-wider text-apple-subtext uppercase mb-0.5">管理员账号</label>
+              <label class="block text-[10px] font-semibold tracking-wider text-[#86868b] uppercase mb-0.5">管理员账号</label>
               <input 
                 v-model="loginForm.username" 
                 type="text" 
                 required 
                 placeholder="admin"
-                class="w-full bg-transparent text-sm text-white placeholder-apple-subtext/50 focus:outline-none"
+                class="w-full bg-transparent text-sm text-[#1d1d1f] placeholder-[#86868b]/50 focus:outline-none"
               >
             </div>
             <div class="px-4 py-3 relative">
-              <label class="block text-[10px] font-semibold tracking-wider text-apple-subtext uppercase mb-0.5">登录密码</label>
+              <label class="block text-[10px] font-semibold tracking-wider text-[#86868b] uppercase mb-0.5">登录密码</label>
               <div class="flex items-center justify-between">
                 <input 
                   v-model="loginForm.password" 
                   :type="showLoginPassword ? 'text' : 'password'" 
                   required 
                   placeholder="••••••••"
-                  class="w-full bg-transparent text-sm text-white placeholder-apple-subtext/50 focus:outline-none"
+                  class="w-full bg-transparent text-sm text-[#1d1d1f] placeholder-[#86868b]/50 focus:outline-none"
                 >
                 <button 
                   type="button" 
                   @click="showLoginPassword = !showLoginPassword" 
-                  class="text-xs text-apple-subtext hover:text-white px-1 select-none"
+                  class="text-xs text-[#86868b] hover:text-[#1d1d1f] px-1 select-none"
                 >
                   {{ showLoginPassword ? '隐藏' : '显示' }}
                 </button>
@@ -195,80 +192,80 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-between text-xs px-1 text-apple-subtext">
+          <div class="flex items-center justify-between text-xs px-1 text-[#86868b]">
             <label class="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" v-model="loginForm.remember_me" class="rounded border-white/20 bg-white/5 text-apple-blue">
+              <input type="checkbox" v-model="loginForm.remember_me" class="rounded border-black/20 text-[#0071e3]">
               <span>在此设备保持登录</span>
             </label>
-            <button type="button" @click="loginForm.username='admin'" class="text-apple-blue hover:underline">默认账号</button>
+            <button type="button" @click="loginForm.username='admin'" class="text-[#0071e3] hover:underline">默认账号</button>
           </div>
 
           <button 
             type="submit" 
             :disabled="loginLoading || lockRemaining > 0"
-            class="w-full py-3 rounded-full bg-apple-blue hover:bg-apple-blueHover text-white text-sm font-medium apple-spring apple-press flex items-center justify-center gap-1.5 shadow-lg shadow-apple-blue/20 disabled:opacity-50 disabled:pointer-events-none mt-2"
+            class="w-full py-3 rounded-full bg-[#0071e3] hover:bg-[#0077ed] text-white text-sm font-medium apple-spring apple-press flex items-center justify-center gap-1.5 shadow-[0_4px_14px_rgba(0,113,227,0.3)] disabled:opacity-50 disabled:pointer-events-none mt-2"
           >
-            <span v-if="loginLoading" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+            <span v-if="loginLoading" class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>
             <span v-else>{{ lockRemaining > 0 ? `锁定中 (${lockRemaining}s)` : '登 录' }}</span>
           </button>
         </form>
 
         <div class="mt-7 text-center">
-          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-[11px] text-apple-subtext">
-            <span class="w-1.5 h-1.5 rounded-full" :class="safeEntrance.enabled ? 'bg-apple-green' : 'bg-apple-subtext'"></span>
-            <span>专属安全入口保护：{{ safeEntrance.enabled ? '已生效' : '未开启' }}</span>
+          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#f2f2f7] border border-black/[0.06] text-[11px] text-[#86868b]">
+            <span class="w-1.5 h-1.5 rounded-full" :class="safeEntrance.enabled ? 'bg-[#34c759]' : 'bg-[#86868b]'"></span>
+            <span>安全入口防护：{{ safeEntrance.enabled ? '已启用' : '未开启' }}</span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 主控台主视图 (Apple macOS Tahoe / Sequoia 风格) -->
+    <!-- 主控台主视图 (Apple 纯净明亮 macOS Sequoia 风格) -->
     <div v-else class="flex-1 flex flex-col">
-      <!-- 顶部玻璃导航栏 -->
-      <header class="sticky top-0 z-40 apple-glass border-b border-white/[0.08] px-4 lg:px-8 py-3">
+      <!-- 顶部苹果清爽白色毛玻璃导航 -->
+      <header class="sticky top-0 z-40 apple-glass border-b border-black/[0.06] px-4 lg:px-8 py-3">
         <div class="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <!-- 左侧品牌标识 -->
           <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-xl bg-gradient-to-b from-[#2c2c2e] to-[#1c1c1e] border border-white/10 flex items-center justify-center shadow">
-              <svg class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <div class="w-8 h-8 rounded-xl bg-gradient-to-b from-[#ffffff] to-[#f2f2f7] border border-black/[0.08] flex items-center justify-center shadow-sm">
+              <svg class="w-4 h-4 text-[#1d1d1f]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
               </svg>
             </div>
             <div>
-              <div class="text-sm font-semibold tracking-tight text-white leading-none">Work-V</div>
-              <div class="text-[10px] text-apple-subtext font-normal mt-0.5">分布式节点中枢</div>
+              <div class="text-sm font-semibold tracking-tight text-[#1d1d1f] leading-none">Work-V</div>
+              <div class="text-[10px] text-[#86868b] font-normal mt-0.5">分布式节点中枢</div>
             </div>
           </div>
 
-          <!-- 中央：macOS 经典分段控制器 (Segmented Control) -->
-          <nav class="hidden md:flex items-center bg-[#1c1c1e] p-1 rounded-full border border-white/[0.08] shadow-inner">
+          <!-- 中央：macOS 经典灰底纯白药丸分段控制器 (Segmented Control) -->
+          <nav class="hidden md:flex items-center bg-[#e5e5ea] p-1 rounded-full border border-black/[0.04]">
             <button 
               @click="currentTab = 'dashboard'" 
               class="px-4 py-1.5 rounded-full text-xs font-medium apple-spring"
-              :class="currentTab === 'dashboard' ? 'bg-[#2c2c2e] text-white shadow-sm' : 'text-apple-subtext hover:text-white'"
+              :class="currentTab === 'dashboard' ? 'bg-white text-[#1d1d1f] shadow-sm font-semibold' : 'text-[#86868b] hover:text-[#1d1d1f]'"
             >
               概览看板
             </button>
             <button 
               @click="currentTab = 'nodes'" 
               class="px-4 py-1.5 rounded-full text-xs font-medium apple-spring flex items-center gap-1.5"
-              :class="currentTab === 'nodes' ? 'bg-[#2c2c2e] text-white shadow-sm' : 'text-apple-subtext hover:text-white'"
+              :class="currentTab === 'nodes' ? 'bg-white text-[#1d1d1f] shadow-sm font-semibold' : 'text-[#86868b] hover:text-[#1d1d1f]'"
             >
               <span>节点集群</span>
-              <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-white/10">{{ nodes.length }}</span>
+              <span class="text-[10px] px-1.5 py-0.2 rounded-full" :class="currentTab === 'nodes' ? 'bg-[#f2f2f7]' : 'bg-white/80'">{{ nodes.length }}</span>
             </button>
             <button 
               @click="currentTab = 'users'" 
               class="px-4 py-1.5 rounded-full text-xs font-medium apple-spring flex items-center gap-1.5"
-              :class="currentTab === 'users' ? 'bg-[#2c2c2e] text-white shadow-sm' : 'text-apple-subtext hover:text-white'"
+              :class="currentTab === 'users' ? 'bg-white text-[#1d1d1f] shadow-sm font-semibold' : 'text-[#86868b] hover:text-[#1d1d1f]'"
             >
               <span>用户订阅</span>
-              <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-white/10">{{ users.length }}</span>
+              <span class="text-[10px] px-1.5 py-0.2 rounded-full" :class="currentTab === 'users' ? 'bg-[#f2f2f7]' : 'bg-white/80'">{{ users.length }}</span>
             </button>
             <button 
               @click="currentTab = 'settings'" 
               class="px-4 py-1.5 rounded-full text-xs font-medium apple-spring"
-              :class="currentTab === 'settings' ? 'bg-[#2c2c2e] text-white shadow-sm' : 'text-apple-subtext hover:text-white'"
+              :class="currentTab === 'settings' ? 'bg-white text-[#1d1d1f] shadow-sm font-semibold' : 'text-[#86868b] hover:text-[#1d1d1f]'"
             >
               系统设置
             </button>
@@ -276,11 +273,11 @@
 
           <!-- 右侧控件集 -->
           <div class="flex items-center gap-2">
-            <!-- 专属安全路径胶囊按钮 -->
+            <!-- 专属安全路径药丸 -->
             <button 
               @click="openSafeModal" 
               class="px-3 py-1.5 rounded-full text-xs font-medium border flex items-center gap-1.5 apple-spring apple-press"
-              :class="safeEntrance.enabled ? 'bg-apple-green/10 text-apple-green border-apple-green/20 hover:bg-apple-green/15' : 'bg-apple-subtext/10 text-apple-subtext border-white/10'"
+              :class="safeEntrance.enabled ? 'bg-[#34c759]/10 text-[#28a745] border-[#34c759]/25 hover:bg-[#34c759]/15' : 'bg-black/[0.04] text-[#86868b] border-black/[0.08]'"
               title="配置安全入口"
             >
               <span>🔒</span>
@@ -290,17 +287,17 @@
             <!-- 刷新按钮 -->
             <button 
               @click="fetchData" 
-              title="刷新状态" 
-              class="w-8 h-8 rounded-full bg-[#1c1c1e] hover:bg-[#2c2c2e] border border-white/10 text-apple-subtext hover:text-white flex items-center justify-center apple-spring apple-press"
+              title="刷新数据" 
+              class="w-8 h-8 rounded-full bg-white hover:bg-[#f2f2f7] border border-black/[0.08] text-[#86868b] hover:text-[#1d1d1f] flex items-center justify-center apple-spring apple-press shadow-sm"
             >
               <svg class="w-3.5 h-3.5" :class="{'animate-spin': isRefreshing}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
             </button>
 
-            <!-- 退出登录 -->
+            <!-- 登出 -->
             <button 
               @click="logout" 
               title="退出登录"
-              class="w-8 h-8 rounded-full bg-[#1c1c1e] hover:bg-apple-red/20 border border-white/10 text-apple-subtext hover:text-apple-red flex items-center justify-center apple-spring apple-press"
+              class="w-8 h-8 rounded-full bg-white hover:bg-[#ff3b30]/10 border border-black/[0.08] text-[#86868b] hover:text-[#ff3b30] flex items-center justify-center apple-spring apple-press shadow-sm"
             >
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
             </button>
@@ -309,11 +306,11 @@
 
         <!-- 移动端分段控制器 -->
         <div class="md:hidden flex items-center justify-center pt-2">
-          <nav class="flex items-center bg-[#1c1c1e] p-1 rounded-full border border-white/[0.08] w-full justify-around">
-            <button @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'bg-[#2c2c2e] text-white' : 'text-apple-subtext'" class="px-3 py-1 rounded-full text-xs font-medium">概览</button>
-            <button @click="currentTab = 'nodes'" :class="currentTab === 'nodes' ? 'bg-[#2c2c2e] text-white' : 'text-apple-subtext'" class="px-3 py-1 rounded-full text-xs font-medium">节点 ({{ nodes.length }})</button>
-            <button @click="currentTab = 'users'" :class="currentTab === 'users' ? 'bg-[#2c2c2e] text-white' : 'text-apple-subtext'" class="px-3 py-1 rounded-full text-xs font-medium">用户 ({{ users.length }})</button>
-            <button @click="currentTab = 'settings'" :class="currentTab === 'settings' ? 'bg-[#2c2c2e] text-white' : 'text-apple-subtext'" class="px-3 py-1 rounded-full text-xs font-medium">设置</button>
+          <nav class="flex items-center bg-[#e5e5ea] p-1 rounded-full border border-black/[0.04] w-full justify-around">
+            <button @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'bg-white text-[#1d1d1f] font-semibold' : 'text-[#86868b]'" class="px-3 py-1 rounded-full text-xs font-medium">概览</button>
+            <button @click="currentTab = 'nodes'" :class="currentTab === 'nodes' ? 'bg-white text-[#1d1d1f] font-semibold' : 'text-[#86868b]'" class="px-3 py-1 rounded-full text-xs font-medium">节点 ({{ nodes.length }})</button>
+            <button @click="currentTab = 'users'" :class="currentTab === 'users' ? 'bg-white text-[#1d1d1f] font-semibold' : 'text-[#86868b]'" class="px-3 py-1 rounded-full text-xs font-medium">用户 ({{ users.length }})</button>
+            <button @click="currentTab = 'settings'" :class="currentTab === 'settings' ? 'bg-white text-[#1d1d1f] font-semibold' : 'text-[#86868b]'" class="px-3 py-1 rounded-full text-xs font-medium">设置</button>
           </nav>
         </div>
       </header>
@@ -321,121 +318,121 @@
       <!-- 核心内容区域 -->
       <main class="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-8 space-y-6">
 
-        <!-- TAB 1: 概览看板 (Apple Health 质感指标卡片) -->
+        <!-- TAB 1: 概览看板 (Apple Health 纯白高质感指标卡片) -->
         <div v-show="currentTab === 'dashboard'" class="space-y-6">
-          <!-- 4 宫格苹果系统指标块 -->
+          <!-- 4 宫格苹果指标卡片 -->
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <!-- 指标 1: 实时网络吞吐 -->
-            <div class="apple-glass-card rounded-2xl p-5 border border-white/10 shadow-sm flex flex-col justify-between">
-              <div class="flex items-center justify-between text-apple-subtext text-xs">
+            <!-- 卡片 1: 实时网络速率 -->
+            <div class="apple-card rounded-2xl p-5 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-[#86868b] text-xs">
                 <span>实时网络速率</span>
-                <span class="w-2 h-2 rounded-full bg-apple-green animate-pulse"></span>
+                <span class="w-2 h-2 rounded-full bg-[#34c759] animate-pulse"></span>
               </div>
               <div class="my-3">
-                <div class="text-2xl font-bold tracking-tight text-white flex items-baseline gap-1 font-mono">
+                <div class="text-2xl font-bold tracking-tight text-[#1d1d1f] flex items-baseline gap-1 font-mono">
                   <span>↓ {{ formatSpeed(dashboard.traffic?.rx_rate || 0) }}</span>
                 </div>
-                <div class="text-xs text-apple-subtext mt-1 font-mono">
+                <div class="text-xs text-[#86868b] mt-1 font-mono">
                   <span>↑ {{ formatSpeed(dashboard.traffic?.tx_rate || 0) }}</span>
                 </div>
               </div>
-              <div class="text-[11px] text-apple-subtext pt-2 border-t border-white/5 flex items-center justify-between">
+              <div class="text-[11px] text-[#86868b] pt-2 border-t border-black/[0.06] flex items-center justify-between">
                 <span>累计总吞吐</span>
-                <span class="font-mono text-white">{{ formatBytes(dashboard.traffic?.total_bytes || 0) }}</span>
+                <span class="font-mono text-[#1d1d1f] font-medium">{{ formatBytes(dashboard.traffic?.total_bytes || 0) }}</span>
               </div>
             </div>
 
-            <!-- 指标 2: 节点集群状态 -->
-            <div class="apple-glass-card rounded-2xl p-5 border border-white/10 shadow-sm flex flex-col justify-between">
-              <div class="flex items-center justify-between text-apple-subtext text-xs">
-                <span>分布式节点集群</span>
-                <span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 font-mono">{{ dashboard.nodes?.online || 0 }} 在线</span>
+            <!-- 卡片 2: 节点集群状态 -->
+            <div class="apple-card rounded-2xl p-5 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-[#86868b] text-xs">
+                <span>分布式服务节点</span>
+                <span class="text-[11px] px-2 py-0.5 rounded-full bg-[#f2f2f7] text-[#1d1d1f] font-mono font-medium">{{ dashboard.nodes?.online || 0 }} 在线</span>
               </div>
               <div class="my-3">
-                <div class="text-2xl font-bold tracking-tight text-white">
+                <div class="text-2xl font-bold tracking-tight text-[#1d1d1f]">
                   <span>{{ dashboard.nodes?.total || 0 }}</span>
-                  <span class="text-xs text-apple-subtext font-normal ml-1">台纳管节点</span>
+                  <span class="text-xs text-[#86868b] font-normal ml-1">台接入节点</span>
                 </div>
-                <div class="text-xs text-apple-green mt-1 flex items-center gap-1">
-                  <span>●</span> <span>长连活跃中</span>
+                <div class="text-xs text-[#34c759] mt-1 flex items-center gap-1 font-medium">
+                  <span>●</span> <span>长连守护中</span>
                 </div>
               </div>
-              <div class="text-[11px] text-apple-subtext pt-2 border-t border-white/5 flex items-center justify-between">
-                <span>离线预警</span>
-                <span class="font-mono text-white">{{ (dashboard.nodes?.total || 0) - (dashboard.nodes?.online || 0) }} 台</span>
+              <div class="text-[11px] text-[#86868b] pt-2 border-t border-black/[0.06] flex items-center justify-between">
+                <span>离线节点数</span>
+                <span class="font-mono text-[#1d1d1f] font-medium">{{ (dashboard.nodes?.total || 0) - (dashboard.nodes?.online || 0) }} 台</span>
               </div>
             </div>
 
-            <!-- 指标 3: 用户配额健康度 -->
-            <div class="apple-glass-card rounded-2xl p-5 border border-white/10 shadow-sm flex flex-col justify-between">
-              <div class="flex items-center justify-between text-apple-subtext text-xs">
+            <!-- 卡片 3: 用户订阅健康度 -->
+            <div class="apple-card rounded-2xl p-5 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-[#86868b] text-xs">
                 <span>订阅用户状态</span>
-                <span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 font-mono">{{ dashboard.users?.active || 0 }} 正常</span>
+                <span class="text-[11px] px-2 py-0.5 rounded-full bg-[#f2f2f7] text-[#1d1d1f] font-mono font-medium">{{ dashboard.users?.active || 0 }} 正常</span>
               </div>
               <div class="my-3">
-                <div class="text-2xl font-bold tracking-tight text-white">
+                <div class="text-2xl font-bold tracking-tight text-[#1d1d1f]">
                   <span>{{ dashboard.users?.total || 0 }}</span>
-                  <span class="text-xs text-apple-subtext font-normal ml-1">个订阅账户</span>
+                  <span class="text-xs text-[#86868b] font-normal ml-1">位订阅用户</span>
                 </div>
-                <div class="text-xs text-apple-subtext mt-1">
+                <div class="text-xs text-[#86868b] mt-1">
                   <span>已用流量 {{ formatBytes(dashboard.users?.used_traffic || 0) }}</span>
                 </div>
               </div>
-              <div class="text-[11px] text-apple-subtext pt-2 border-t border-white/5 flex items-center justify-between">
-                <span>配额熔断 / 到期</span>
-                <span class="font-mono text-apple-orange">{{ (dashboard.users?.total || 0) - (dashboard.users?.active || 0) }} 位</span>
+              <div class="text-[11px] text-[#86868b] pt-2 border-t border-black/[0.06] flex items-center justify-between">
+                <span>熔断 / 到期人数</span>
+                <span class="font-mono text-[#ff9500] font-medium">{{ (dashboard.users?.total || 0) - (dashboard.users?.active || 0) }} 位</span>
               </div>
             </div>
 
-            <!-- 指标 4: Sing-box 内核运行 -->
-            <div class="apple-glass-card rounded-2xl p-5 border border-white/10 shadow-sm flex flex-col justify-between">
-              <div class="flex items-center justify-between text-apple-subtext text-xs">
+            <!-- 卡片 4: Sing-box 内核运行 -->
+            <div class="apple-card rounded-2xl p-5 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-[#86868b] text-xs">
                 <span>Sing-box 内核</span>
-                <span class="text-[11px] text-apple-blue font-mono cursor-pointer hover:underline" @click="openSingboxModal">版本检查</span>
+                <span class="text-[11px] text-[#0071e3] font-medium cursor-pointer hover:underline" @click="openSingboxModal">版本检查</span>
               </div>
               <div class="my-3">
-                <div class="text-lg font-bold tracking-tight text-white font-mono truncate">
+                <div class="text-lg font-bold tracking-tight text-[#1d1d1f] font-mono truncate">
                   {{ (singboxInfo.current_version || 'sing-box').split(' ')[0] }}
                 </div>
-                <div class="text-xs mt-1" :class="singboxInfo.update_available ? 'text-apple-orange' : 'text-apple-green'">
+                <div class="text-xs mt-1 font-medium" :class="singboxInfo.update_available ? 'text-[#ff9500]' : 'text-[#34c759]'">
                   {{ singboxInfo.update_available ? '发现官方新版本' : '运行为最新版本' }}
                 </div>
               </div>
-              <div class="text-[11px] text-apple-subtext pt-2 border-t border-white/5 flex items-center justify-between">
-                <span>一键升级维护</span>
-                <button @click="openSingboxModal" class="text-apple-blue hover:underline">立即管理</button>
+              <div class="text-[11px] text-[#86868b] pt-2 border-t border-black/[0.06] flex items-center justify-between">
+                <span>一键内核运维</span>
+                <button @click="openSingboxModal" class="text-[#0071e3] hover:underline font-medium">立即查看</button>
               </div>
             </div>
           </div>
 
-          <!-- 快捷操作入口条 (Apple Control Bar) -->
-          <div class="apple-glass-card rounded-2xl p-4 flex items-center justify-between gap-4 flex-wrap">
-            <div class="text-xs text-apple-subtext">
-              快捷指令：随时可通过左上方安全入口直达管理，支持全平台订阅一键直连导出。
+          <!-- 快速动作白底条 -->
+          <div class="apple-card rounded-2xl p-4 flex items-center justify-between gap-4 flex-wrap">
+            <div class="text-xs text-[#86868b]">
+              💡 快捷指引：点击上方安全入口药丸可随时修改密钥路径，支持通用自适应订阅与各端直连导出。
             </div>
             <div class="flex items-center gap-2">
-              <button @click="openAddNodeModal" class="px-4 py-2 rounded-full bg-apple-blue hover:bg-apple-blueHover text-white font-medium text-xs apple-spring apple-press flex items-center gap-1.5 shadow-sm">
-                <span>+ 添加节点</span>
+              <button @click="openAddNodeModal" class="px-4 py-2 rounded-full bg-[#0071e3] hover:bg-[#0077ed] text-white font-medium text-xs apple-spring apple-press shadow-[0_2px_8px_rgba(0,113,227,0.25)]">
+                + 添加节点
               </button>
-              <button @click="showAddUserModal = true" class="px-4 py-2 rounded-full bg-[#2c2c2e] hover:bg-white/20 text-white font-medium text-xs apple-spring apple-press border border-white/10">
-                <span>+ 创建用户</span>
+              <button @click="showAddUserModal = true" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#1d1d1f] font-medium text-xs apple-spring apple-press border border-black/[0.06]">
+                + 创建用户
               </button>
-              <button @click="showBatchUserModal = true" class="px-4 py-2 rounded-full bg-[#2c2c2e] hover:bg-white/20 text-white font-medium text-xs apple-spring apple-press border border-white/10">
-                <span>批量生成用户</span>
+              <button @click="showBatchUserModal = true" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#1d1d1f] font-medium text-xs apple-spring apple-press border border-black/[0.06]">
+                批量生成用户
               </button>
             </div>
           </div>
         </div>
 
-        <!-- TAB 2: 节点集群管理 (Apple Settings 列表风格) -->
+        <!-- TAB 2: 节点集群管理 (Apple Settings 纯白条目风格) -->
         <div v-show="currentTab === 'nodes'" class="space-y-4">
           <div class="flex items-center justify-between">
             <div>
-              <h2 class="text-lg font-semibold tracking-tight text-white">分布式节点集群</h2>
-              <p class="text-xs text-apple-subtext mt-0.5">在线状态下的节点将自动组合并注入所有用户的下发订阅中</p>
+              <h2 class="text-lg font-semibold tracking-tight text-[#1d1d1f]">分布式节点集群</h2>
+              <p class="text-xs text-[#86868b] mt-0.5">在线状态下的节点将自动组合并注入所有用户的下发订阅中</p>
             </div>
-            <button @click="openAddNodeModal" class="px-4 py-2 rounded-full bg-apple-blue hover:bg-apple-blueHover text-white font-medium text-xs apple-spring apple-press flex items-center gap-1.5 shadow-sm">
-              <span>+ 添加新节点</span>
+            <button @click="openAddNodeModal" class="px-4 py-2 rounded-full bg-[#0071e3] hover:bg-[#0077ed] text-white font-medium text-xs apple-spring apple-press shadow-[0_2px_8px_rgba(0,113,227,0.25)]">
+              + 添加新节点
             </button>
           </div>
 
@@ -444,81 +441,81 @@
             <div 
               v-for="node in nodes" 
               :key="node.id"
-              class="apple-glass-card rounded-2xl p-5 border border-white/10 apple-spring hover:border-white/20 flex flex-col md:flex-row md:items-center justify-between gap-4"
+              class="apple-card rounded-2xl p-5 apple-spring hover:border-black/20 flex flex-col md:flex-row md:items-center justify-between gap-4"
             >
               <!-- 节点核心元数据 -->
               <div class="space-y-2 min-w-0 flex-1">
                 <div class="flex items-center gap-2.5 flex-wrap">
-                  <span class="w-2.5 h-2.5 rounded-full" :class="node.status === 'online' ? 'bg-apple-green ring-4 ring-apple-green/20' : 'bg-apple-subtext'"></span>
-                  <h3 class="text-sm font-semibold text-white tracking-tight">{{ node.name }}</h3>
-                  <span class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 font-mono text-apple-subtext">倍率: {{ node.rate }}x</span>
-                  <span v-if="node.hidden" class="text-[10px] px-2 py-0.5 rounded-full bg-apple-orange/15 text-apple-orange border border-apple-orange/20 font-medium">🙈 订阅隐藏</span>
-                  <button @click="pingNode(node)" class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 hover:bg-white/10 text-apple-subtext hover:text-white font-mono transition">
+                  <span class="w-2.5 h-2.5 rounded-full" :class="node.status === 'online' ? 'bg-[#34c759] ring-4 ring-[#34c759]/20' : 'bg-[#86868b]'"></span>
+                  <h3 class="text-sm font-semibold text-[#1d1d1f] tracking-tight">{{ node.name }}</h3>
+                  <span class="text-[10px] px-2 py-0.5 rounded-full bg-[#f2f2f7] font-mono text-[#86868b]">倍率: {{ node.rate }}x</span>
+                  <span v-if="node.hidden" class="text-[10px] px-2 py-0.5 rounded-full bg-[#ff9500]/15 text-[#ff9500] border border-[#ff9500]/25 font-medium">🙈 订阅隐藏</span>
+                  <button @click="pingNode(node)" class="text-[10px] px-2 py-0.5 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] hover:text-[#1d1d1f] font-mono transition">
                     {{ nodeLatency[node.id] !== undefined ? nodeLatency[node.id] + 'ms' : 'Ping' }}
                   </button>
                 </div>
-                <div class="text-xs text-apple-subtext font-mono">
+                <div class="text-xs text-[#86868b] font-mono">
                   {{ node.address || '自动探测地址' }}
                 </div>
 
-                <!-- 动态解析入站协议池 (苹果极简轻量胶囊) -->
+                <!-- 动态解析入站协议池 (苹果明亮彩胶囊) -->
                 <div class="flex items-center gap-1.5 flex-wrap pt-1">
                   <span 
                     v-for="p in getNodeProtocols(node)" 
                     :key="p.tag || p.name"
-                    class="text-[11px] px-2.5 py-0.5 rounded-full font-mono border"
+                    class="text-[11px] px-2.5 py-0.5 rounded-full font-mono border font-medium"
                     :class="getAppleProtocolBadgeClass(p.color)"
                   >
                     {{ p.name }} · {{ p.port }}
                   </span>
-                  <span v-if="getNodeProtocols(node).length === 0" class="text-[11px] text-apple-subtext font-mono">
+                  <span v-if="getNodeProtocols(node).length === 0" class="text-[11px] text-[#86868b] font-mono">
                     未配置入站协议
                   </span>
-                  <span v-if="node.singbox_pid > 0" class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-apple-subtext font-mono">
+                  <span v-if="node.singbox_pid > 0" class="text-[11px] px-2 py-0.5 rounded-full bg-[#f2f2f7] text-[#86868b] font-mono">
                     PID: {{ node.singbox_pid }}
                   </span>
                 </div>
               </div>
 
-              <!-- 节点极简动作集 (Apple Button Group) -->
+              <!-- 节点动作集 -->
               <div class="flex items-center gap-1.5 flex-wrap shrink-0">
-                <button @click="quickCopyCommand(node)" class="px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs font-medium text-white apple-spring apple-press">
+                <button @click="quickCopyCommand(node)" class="px-3 py-1.5 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-xs font-medium text-[#1d1d1f] apple-spring apple-press border border-black/[0.04]">
                   安装命令
                 </button>
-                <button @click="openShareModal(node)" class="px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs font-medium text-apple-blue apple-spring apple-press">
+                <button @click="openShareModal(node)" class="px-3 py-1.5 rounded-full bg-[#0071e3]/10 hover:bg-[#0071e3]/20 text-xs font-medium text-[#0071e3] apple-spring apple-press border border-[#0071e3]/20">
                   单机链接
                 </button>
-                <button @click="openInboundsModal(node)" class="px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs font-medium text-white apple-spring apple-press">
+                <button @click="openInboundsModal(node)" class="px-3 py-1.5 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-xs font-medium text-[#1d1d1f] apple-spring apple-press border border-black/[0.04]">
                   协议配置
                 </button>
-                <button @click="toggleNodeHidden(node)" class="px-3 py-1.5 rounded-full text-xs font-medium apple-spring apple-press" :class="node.hidden ? 'bg-apple-orange/20 text-apple-orange' : 'bg-white/[0.06] text-apple-subtext hover:text-white'">
+                <button @click="toggleNodeHidden(node)" class="px-3 py-1.5 rounded-full text-xs font-medium apple-spring apple-press border" :class="node.hidden ? 'bg-[#ff9500]/15 text-[#ff9500] border-[#ff9500]/25' : 'bg-[#f2f2f7] text-[#86868b] hover:text-[#1d1d1f] border-black/[0.04]'">
                   {{ node.hidden ? '设为可见' : '设为隐藏' }}
                 </button>
-                <button @click="openNodeLogsModal(node)" class="px-2.5 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs text-apple-subtext hover:text-white apple-spring apple-press" title="查看内核日志">
+                <button @click="openNodeLogsModal(node)" class="px-2.5 py-1.5 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-xs text-[#86868b] hover:text-[#1d1d1f] apple-spring apple-press" title="查看内核日志">
                   日志
                 </button>
-                <button @click="openEditNodeModal(node)" class="px-2.5 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs text-apple-subtext hover:text-white apple-spring apple-press" title="编辑名称与地址">
+                <button @click="openEditNodeModal(node)" class="px-2.5 py-1.5 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-xs text-[#86868b] hover:text-[#1d1d1f] apple-spring apple-press" title="编辑名称与地址">
                   编辑
                 </button>
-                <button @click="restartNodeSingbox(node)" class="px-2.5 py-1.5 rounded-full bg-white/[0.06] hover:bg-apple-orange/20 text-xs text-apple-orange apple-spring apple-press" title="重启 Sing-box">
+                <button @click="restartNodeSingbox(node)" class="px-2.5 py-1.5 rounded-full bg-[#f2f2f7] hover:bg-[#ff9500]/15 text-xs text-[#ff9500] apple-spring apple-press" title="重启 Sing-box">
                   重启
                 </button>
-                <button @click="deleteNode(node.id)" class="px-2.5 py-1.5 rounded-full bg-white/[0.06] hover:bg-apple-red/20 text-xs text-apple-red apple-spring apple-press" title="删除节点">
+                <button @click="deleteNode(node.id)" class="px-2.5 py-1.5 rounded-full bg-[#f2f2f7] hover:bg-[#ff3b30]/15 text-xs text-[#ff3b30] apple-spring apple-press" title="删除节点">
                   删除
                 </button>
               </div>
             </div>
 
-            <div v-if="nodes.length === 0" class="py-16 text-center text-apple-subtext apple-glass rounded-2xl border border-dashed border-white/10">
+            <div v-if="nodes.length === 0" class="py-16 text-center text-[#86868b] bg-white rounded-2xl border border-dashed border-black/10">
               <p class="text-sm">暂未添加服务节点</p>
-              <button @click="openAddNodeModal" class="mt-3 px-4 py-2 rounded-full bg-apple-blue text-white text-xs font-medium apple-press">
+              <button @click="openAddNodeModal" class="mt-3 px-4 py-2 rounded-full bg-[#0071e3] text-white text-xs font-medium apple-press">
                 立即添加第一台节点
               </button>
             </div>
           </div>
         </div>
 
-        <!-- TAB 3: 用户与全量订阅 (Apple Contacts / Wallet 风格) -->
+        <!-- TAB 3: 用户与全量订阅 (Apple Contacts 纯白条目风格) -->
         <div v-show="currentTab === 'users'" class="space-y-4">
           <!-- 顶部工具栏 -->
           <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -526,17 +523,17 @@
               <input 
                 v-model="userSearchQuery" 
                 placeholder="搜索用户名或 UUID..." 
-                class="w-full px-4 py-2 rounded-full bg-[#1c1c1e] border border-white/10 text-xs text-white placeholder-apple-subtext focus:outline-none focus:border-apple-blue"
+                class="w-full px-4 py-2 rounded-full bg-white border border-black/10 text-xs text-[#1d1d1f] placeholder-[#86868b] focus:outline-none focus:border-[#0071e3] shadow-sm"
               >
             </div>
             <div class="flex items-center gap-2 flex-wrap">
-              <button @click="batchResetTraffic" class="px-3.5 py-2 rounded-full bg-white/[0.06] hover:bg-apple-red/20 text-apple-subtext hover:text-apple-red text-xs font-medium apple-spring apple-press">
+              <button @click="batchResetTraffic" class="px-3.5 py-2 rounded-full bg-white hover:bg-[#ff3b30]/10 text-[#86868b] hover:text-[#ff3b30] text-xs font-medium apple-spring apple-press border border-black/10 shadow-sm">
                 全员重置已用流量
               </button>
-              <button @click="showBatchUserModal = true" class="px-3.5 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white text-xs font-medium apple-spring apple-press">
+              <button @click="showBatchUserModal = true" class="px-3.5 py-2 rounded-full bg-white hover:bg-[#f2f2f7] text-[#1d1d1f] text-xs font-medium apple-spring apple-press border border-black/10 shadow-sm">
                 批量生成用户
               </button>
-              <button @click="showAddUserModal = true" class="px-4 py-2 rounded-full bg-apple-blue hover:bg-apple-blueHover text-white text-xs font-medium apple-spring apple-press shadow-sm">
+              <button @click="showAddUserModal = true" class="px-4 py-2 rounded-full bg-[#0071e3] hover:bg-[#0077ed] text-white text-xs font-medium apple-spring apple-press shadow-[0_2px_8px_rgba(0,113,227,0.25)]">
                 + 创建用户
               </button>
             </div>
@@ -547,28 +544,28 @@
             <div 
               v-for="user in filteredUsers" 
               :key="user.id" 
-              class="apple-glass-card rounded-2xl p-5 border border-white/10 apple-spring hover:border-white/20 flex flex-col md:flex-row md:items-center justify-between gap-4"
+              class="apple-card rounded-2xl p-5 apple-spring hover:border-black/20 flex flex-col md:flex-row md:items-center justify-between gap-4"
             >
               <!-- 用户基础信息 -->
               <div class="space-y-2 flex-1 min-w-0">
                 <div class="flex items-center gap-2.5">
                   <span class="w-2.5 h-2.5 rounded-full" :class="getUserStatusDotClass(user)"></span>
-                  <h3 class="text-sm font-semibold text-white tracking-tight">{{ user.username }}</h3>
+                  <h3 class="text-sm font-semibold text-[#1d1d1f] tracking-tight">{{ user.username }}</h3>
                   <span class="text-[10px] px-2 py-0.5 rounded-full font-medium" :class="getUserStatusBadgeClass(user)">
                     {{ getUserStatusText(user) }}
                   </span>
                 </div>
-                <div class="text-xs text-apple-subtext font-mono truncate" :title="user.uuid">
+                <div class="text-xs text-[#86868b] font-mono truncate" :title="user.uuid">
                   UUID: {{ user.uuid }}
                 </div>
 
                 <!-- 流量用量 iOS 细线进度条 -->
                 <div class="space-y-1 max-w-md pt-1">
-                  <div class="flex justify-between text-[11px] text-apple-subtext font-mono">
+                  <div class="flex justify-between text-[11px] text-[#86868b] font-mono">
                     <span>已用 {{ formatBytes(user.used_traffic) }}</span>
                     <span>配额 {{ user.traffic_limit > 0 ? formatBytes(user.traffic_limit) : '不限制' }}</span>
                   </div>
-                  <div class="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                  <div class="h-1.5 w-full bg-[#f2f2f7] rounded-full overflow-hidden">
                     <div 
                       class="h-full rounded-full transition-all duration-300"
                       :class="getUserProgressColor(user)"
@@ -582,72 +579,72 @@
               <div class="flex items-center gap-2 flex-wrap shrink-0">
                 <button 
                   @click="openSubModal(user)" 
-                  class="px-4 py-2 rounded-full bg-apple-blue/15 hover:bg-apple-blue/25 text-apple-blue text-xs font-medium apple-spring apple-press border border-apple-blue/20"
+                  class="px-4 py-2 rounded-full bg-[#0071e3]/10 hover:bg-[#0071e3]/20 text-[#0071e3] text-xs font-medium apple-spring apple-press border border-[#0071e3]/20"
                 >
                   📱 获取订阅与链接
                 </button>
-                <button @click="openEditUserModal(user)" class="px-3 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs font-medium text-white apple-spring apple-press">
+                <button @click="openEditUserModal(user)" class="px-3 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-xs font-medium text-[#1d1d1f] apple-spring apple-press border border-black/[0.04]">
                   编辑
                 </button>
-                <button @click="resetUserTraffic(user.id)" class="px-3 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-xs font-medium text-apple-subtext hover:text-white apple-spring apple-press">
+                <button @click="resetUserTraffic(user.id)" class="px-3 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-xs font-medium text-[#86868b] hover:text-[#1d1d1f] apple-spring apple-press border border-black/[0.04]">
                   重置已用
                 </button>
-                <button @click="deleteUser(user.id)" class="px-3 py-2 rounded-full bg-white/[0.06] hover:bg-apple-red/20 text-xs font-medium text-apple-red apple-spring apple-press">
+                <button @click="deleteUser(user.id)" class="px-3 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#ff3b30]/15 text-xs font-medium text-[#ff3b30] apple-spring apple-press border border-black/[0.04]">
                   删除
                 </button>
               </div>
             </div>
 
-            <div v-if="filteredUsers.length === 0" class="py-16 text-center text-apple-subtext apple-glass rounded-2xl border border-dashed border-white/10">
+            <div v-if="filteredUsers.length === 0" class="py-16 text-center text-[#86868b] bg-white rounded-2xl border border-dashed border-black/10">
               <p class="text-sm">暂无匹配用户</p>
             </div>
           </div>
         </div>
 
-        <!-- TAB 4: 系统设置与全局配置 (Apple System Settings 风格) -->
+        <!-- TAB 4: 系统设置与全局配置 (Apple System Settings 纯白卡片风格) -->
         <div v-show="currentTab === 'settings'" class="max-w-2xl mx-auto space-y-5">
           <!-- 卡片 1: 访问域名配置 -->
-          <div class="apple-glass-card rounded-2xl p-6 border border-white/10 space-y-4">
+          <div class="apple-card rounded-2xl p-6 space-y-4">
             <div>
-              <h3 class="text-sm font-semibold text-white">主控对外域名</h3>
-              <p class="text-xs text-apple-subtext mt-0.5">用于下发节点安装命令与通用订阅链接地址的域名解析</p>
+              <h3 class="text-sm font-semibold text-[#1d1d1f]">主控对外域名</h3>
+              <p class="text-xs text-[#86868b] mt-0.5">用于下发节点安装命令与通用订阅链接地址的域名解析</p>
             </div>
             <div>
               <input 
                 v-model="settingsForm.master_domain" 
                 placeholder="如: yx.shangxinci.com"
-                class="w-full px-4 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-xs text-white focus:outline-none focus:border-apple-blue font-mono"
+                class="w-full px-4 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0071e3] font-mono"
               >
             </div>
             <div class="flex justify-end">
-              <button @click="saveSystemSettings" class="px-5 py-2 rounded-full bg-apple-blue text-white text-xs font-medium apple-spring apple-press">
+              <button @click="saveSystemSettings" class="px-5 py-2 rounded-full bg-[#0071e3] text-white text-xs font-medium apple-spring apple-press shadow-[0_2px_8px_rgba(0,113,227,0.25)]">
                 保存域名设置
               </button>
             </div>
           </div>
 
           <!-- 卡片 2: 管理员凭证更新 -->
-          <div class="apple-glass-card rounded-2xl p-6 border border-white/10 space-y-4">
+          <div class="apple-card rounded-2xl p-6 space-y-4">
             <div>
-              <h3 class="text-sm font-semibold text-white">管理员密码修改</h3>
-              <p class="text-xs text-apple-subtext mt-0.5">修改后当前令牌将全部轮换，需使用新密码重新登录</p>
+              <h3 class="text-sm font-semibold text-[#1d1d1f]">管理员密码修改</h3>
+              <p class="text-xs text-[#86868b] mt-0.5">修改后当前令牌将全部轮换，需使用新密码重新登录</p>
             </div>
             <div class="space-y-3">
               <input 
                 v-model="passForm.old_password" 
                 type="password" 
                 placeholder="原密码"
-                class="w-full px-4 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-xs text-white focus:outline-none focus:border-apple-blue"
+                class="w-full px-4 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]"
               >
               <input 
                 v-model="passForm.new_password" 
                 type="password" 
                 placeholder="新密码 (建议 8 位以上)"
-                class="w-full px-4 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-xs text-white focus:outline-none focus:border-apple-blue"
+                class="w-full px-4 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]"
               >
             </div>
             <div class="flex justify-end">
-              <button @click="changePassword" class="px-5 py-2 rounded-full bg-[#2c2c2e] hover:bg-white/20 text-white text-xs font-medium apple-spring apple-press border border-white/10">
+              <button @click="changePassword" class="px-5 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#1d1d1f] text-xs font-medium apple-spring apple-press border border-black/10">
                 更新密码
               </button>
             </div>
@@ -657,88 +654,88 @@
       </main>
     </div>
 
-    <!-- ==================== 苹果风格原生模态弹窗集 (Apple Sheets) ==================== -->
+    <!-- ==================== 苹果明亮风格 Sheet 模态弹窗集 ==================== -->
 
-    <!-- 弹窗 1: 专属安全入口 (Apple Privacy Sheet) -->
-    <div v-if="showSafeModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-md w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-5">
+    <!-- 弹窗 1: 专属安全入口 (Apple Sheet) -->
+    <div v-if="showSafeModal" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-md w-full rounded-3xl p-6 space-y-5">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">专属安全入口保护</h3>
-            <p class="text-xs text-apple-subtext mt-1">类似宝塔安全路径，未经专属入口访问根目录将被拦截防扫描</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">专属安全入口保护</h3>
+            <p class="text-xs text-[#86868b] mt-1">类似宝塔安全路径，未经专属入口访问根目录将被拦截防扫描</p>
           </div>
-          <button @click="showSafeModal = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="showSafeModal = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
 
         <div class="space-y-4 text-xs">
           <!-- iOS 风格开关 -->
-          <div class="flex items-center justify-between p-3.5 rounded-2xl bg-[#2c2c2e]/60 border border-white/10">
+          <div class="flex items-center justify-between p-3.5 rounded-2xl bg-[#f2f2f7] border border-black/[0.06]">
             <div>
-              <div class="font-medium text-white">入口防护状态</div>
-              <div class="text-[11px] text-apple-subtext mt-0.5">{{ safeEntrance.enabled ? '已开启防护，仅专属路径可进入' : '未开启，允许任意路径访问' }}</div>
+              <div class="font-medium text-[#1d1d1f]">入口防护状态</div>
+              <div class="text-[11px] text-[#86868b] mt-0.5">{{ safeEntrance.enabled ? '已开启防护，仅专属路径可进入' : '未开启，允许任意路径访问' }}</div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
               <input type="checkbox" v-model="safeEntrance.enabled" class="sr-only peer">
-              <div class="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-apple-green"></div>
+              <div class="w-11 h-6 bg-[#e5e5ea] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#34c759]"></div>
             </label>
           </div>
 
           <div v-if="safeEntrance.enabled" class="space-y-3">
             <div>
-              <div class="flex items-center justify-between text-apple-subtext mb-1">
+              <div class="flex items-center justify-between text-[#86868b] mb-1">
                 <span>当前完整安全入口 URL</span>
-                <button type="button" @click="copyText(safeEntrance.url || (window.location.origin + (safePathInput || '')))" class="text-apple-blue hover:underline">拷贝链接</button>
+                <button type="button" @click="copyText(safeEntrance.url || (window.location.origin + (safePathInput || '')))" class="text-[#0071e3] hover:underline font-medium">拷贝链接</button>
               </div>
-              <div class="p-3 bg-black/60 rounded-xl border border-white/10 font-mono text-[11px] text-apple-green truncate">
+              <div class="p-3 bg-[#f2f2f7] rounded-xl border border-black/[0.06] font-mono text-[11px] text-[#28a745] font-semibold truncate select-all">
                 {{ safeEntrance.url || (window.location.origin + (safePathInput || '')) }}
               </div>
             </div>
 
             <div>
-              <div class="flex items-center justify-between text-apple-subtext mb-1">
+              <div class="flex items-center justify-between text-[#86868b] mb-1">
                 <span>自定义安全入口路径</span>
-                <button type="button" @click="generateRandomSafePath" class="text-apple-blue hover:underline">🎲 随机生成</button>
+                <button type="button" @click="generateRandomSafePath" class="text-[#0071e3] hover:underline font-medium">🎲 随机生成</button>
               </div>
               <input 
                 v-model="safePathInput" 
                 placeholder="如: /my_secret_9f8a"
-                class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono text-xs focus:outline-none focus:border-apple-blue"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono text-xs focus:outline-none focus:border-[#0071e3]"
               >
-              <p class="text-[11px] text-apple-orange/90 mt-1">⚠️ 保存后浏览器地址栏将同步更换，请务必书签收藏新路径！</p>
+              <p class="text-[11px] text-[#ff9500] mt-1 font-medium">⚠️ 保存后浏览器地址栏将同步更换，请务必书签收藏新路径！</p>
             </div>
           </div>
 
           <div class="pt-2 flex justify-end gap-2">
-            <button @click="showSafeModal = false" class="px-4 py-2 rounded-full bg-white/[0.06] text-apple-subtext text-xs font-medium apple-press">取消</button>
-            <button @click="saveSafeEntrance" class="px-5 py-2 rounded-full bg-apple-blue text-white text-xs font-medium apple-spring apple-press">保存并生效</button>
+            <button @click="showSafeModal = false" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] text-xs font-medium apple-press">取消</button>
+            <button @click="saveSafeEntrance" class="px-5 py-2 rounded-full bg-[#0071e3] text-white text-xs font-medium apple-spring apple-press shadow-sm">保存并生效</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 弹窗 2: 用户专属订阅与链接导出 (Apple Wallet Sheet) -->
-    <div v-if="selectedUserForSub" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-xl w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-5">
+    <!-- 弹窗 2: 用户专属订阅与链接导出 (Apple Sheet) -->
+    <div v-if="selectedUserForSub" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-xl w-full rounded-3xl p-6 space-y-5">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">订阅与客户端直连</h3>
-            <p class="text-xs text-apple-subtext mt-0.5">用户【{{ selectedUserForSub.username }}】的多端聚合链接与配置文件</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">订阅与客户端直连</h3>
+            <p class="text-xs text-[#86868b] mt-0.5">用户【{{ selectedUserForSub.username }}】的多端聚合链接与配置文件</p>
           </div>
-          <button @click="selectedUserForSub = null" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="selectedUserForSub = null" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
 
         <div class="space-y-4 text-xs">
-          <!-- 订阅类型选项卡 -->
-          <div class="p-3.5 rounded-2xl bg-[#2c2c2e]/60 border border-white/10 space-y-3">
-            <div class="text-apple-subtext font-medium">通用自适应聚合订阅 (推荐)</div>
-            <div class="p-2.5 bg-black/60 rounded-xl border border-white/10 font-mono text-[11px] text-white truncate select-all">
+          <!-- 通用自适应聚合订阅 -->
+          <div class="p-4 rounded-2xl bg-[#f2f2f7] border border-black/[0.06] space-y-3">
+            <div class="text-[#86868b] font-medium">通用自适应聚合订阅 (推荐)</div>
+            <div class="p-2.5 bg-white rounded-xl border border-black/10 font-mono text-[11px] text-[#1d1d1f] truncate select-all">
               {{ getSubURL(selectedUserForSub.sub_token) }}
             </div>
             <div class="flex items-center gap-2">
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token))" class="flex-1 py-2 rounded-full bg-apple-blue text-white font-medium text-xs apple-spring apple-press">
+              <button @click="copyText(getSubURL(selectedUserForSub.sub_token))" class="flex-1 py-2 rounded-full bg-[#0071e3] text-white font-medium text-xs apple-spring apple-press shadow-sm">
                 复制通用订阅链接
               </button>
-              <button @click="openQr(getSubURL(selectedUserForSub.sub_token), '通用订阅二维码')" class="px-4 py-2 rounded-full bg-white/[0.08] text-white font-medium text-xs apple-press">
+              <button @click="openQr(getSubURL(selectedUserForSub.sub_token), '通用订阅二维码')" class="px-4 py-2 rounded-full bg-white text-[#1d1d1f] font-medium text-xs apple-press border border-black/10 shadow-sm">
                 二维码
               </button>
             </div>
@@ -746,34 +743,34 @@
 
           <!-- 分端直链导出 -->
           <div class="grid grid-cols-2 gap-2">
-            <div class="p-3 rounded-xl bg-white/[0.04] border border-white/5 space-y-2">
-              <div class="font-medium text-white">Clash / Mihomo</div>
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'clash'))" class="w-full py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[11px] text-white apple-press">
+            <div class="p-3 rounded-xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
+              <div class="font-medium text-[#1d1d1f]">Clash / Mihomo</div>
+              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'clash'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
                 复制 Clash 链接
               </button>
             </div>
-            <div class="p-3 rounded-xl bg-white/[0.04] border border-white/5 space-y-2">
-              <div class="font-medium text-white">Sing-box JSON</div>
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'singbox'))" class="w-full py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[11px] text-white apple-press">
+            <div class="p-3 rounded-xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
+              <div class="font-medium text-[#1d1d1f]">Sing-box JSON</div>
+              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'singbox'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
                 复制 Singbox 配置
               </button>
             </div>
-            <div class="p-3 rounded-xl bg-white/[0.04] border border-white/5 space-y-2">
-              <div class="font-medium text-white">Base64 通用节点池</div>
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'base64'))" class="w-full py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[11px] text-white apple-press">
+            <div class="p-3 rounded-xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
+              <div class="font-medium text-[#1d1d1f]">Base64 通用节点池</div>
+              <button @click="copyText(getSubURL(selectedUserForSub.sub_token, 'base64'))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
                 复制 Base64 订阅
               </button>
             </div>
-            <div class="p-3 rounded-xl bg-white/[0.04] border border-white/5 space-y-2">
-              <div class="font-medium text-white">Shadowrocket / 小火箭</div>
-              <button @click="copyText(getSubURL(selectedUserForSub.sub_token))" class="w-full py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-[11px] text-white apple-press">
+            <div class="p-3 rounded-xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
+              <div class="font-medium text-[#1d1d1f]">Shadowrocket / 小火箭</div>
+              <button @click="copyText(getSubURL(selectedUserForSub.sub_token))" class="w-full py-1.5 rounded-full bg-white hover:bg-white/80 text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">
                 一键导入小火箭
               </button>
             </div>
           </div>
 
           <div class="flex justify-end pt-2">
-            <button @click="selectedUserForSub = null" class="px-5 py-2 rounded-full bg-white/[0.08] text-white text-xs font-medium apple-press">
+            <button @click="selectedUserForSub = null" class="px-5 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#1d1d1f] text-xs font-medium apple-press border border-black/[0.06]">
               完成
             </button>
           </div>
@@ -781,165 +778,165 @@
       </div>
     </div>
 
-    <!-- 弹窗 3: 节点协议入站与参数深度配置 (Apple Inspector Sheet) -->
-    <div v-if="inboundsModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-2xl w-full max-h-[85vh] rounded-3xl p-6 border border-white/15 shadow-2xl flex flex-col space-y-4">
-        <div class="flex items-start justify-between pb-3 border-b border-white/10">
+    <!-- 弹窗 3: 节点协议入站与参数深度配置 (Apple Sheet) -->
+    <div v-if="inboundsModal.show" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-2xl w-full max-h-[85vh] rounded-3xl p-6 flex flex-col space-y-4">
+        <div class="flex items-start justify-between pb-3 border-b border-black/[0.06]">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">节点协议与入站配置</h3>
-            <p class="text-xs text-apple-subtext mt-0.5">节点【{{ inboundsModal.node?.name }}】的监听端口、Reality伪装与高级流控参数</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">节点协议与入站配置</h3>
+            <p class="text-xs text-[#86868b] mt-0.5">节点【{{ inboundsModal.node?.name }}】的监听端口、Reality伪装与高级流控参数</p>
           </div>
-          <button @click="inboundsModal.show = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="inboundsModal.show = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
 
         <!-- 协议池快速增添条 -->
         <div class="flex items-center gap-1.5 flex-wrap text-xs">
-          <span class="text-apple-subtext">增加入站:</span>
+          <span class="text-[#86868b]">增加入站:</span>
           <button 
             v-for="p in allProtocols" 
             :key="p.key" 
             @click="addNewInbound(p.key)" 
-            class="px-2.5 py-1 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white apple-press flex items-center gap-1"
+            class="px-2.5 py-1 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[11px] text-[#1d1d1f] apple-press flex items-center gap-1 border border-black/[0.06]"
           >
             <span>{{ p.icon }}</span>
             <span>{{ p.name }}</span>
           </button>
         </div>
 
-        <!-- 协议入站卡片列表滚动容器 -->
+        <!-- 协议入站卡片列表 -->
         <div class="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
-          <div v-if="!inboundsModal.list || inboundsModal.list.length === 0" class="py-12 text-center text-apple-subtext">
+          <div v-if="!inboundsModal.list || inboundsModal.list.length === 0" class="py-12 text-center text-[#86868b]">
             该节点暂未配置入站协议，请点击上方按钮快速开启。
           </div>
 
           <div 
             v-for="(inb, idx) in inboundsModal.list" 
             :key="inb.tag || idx" 
-            class="p-4 rounded-2xl bg-[#2c2c2e]/60 border border-white/10 space-y-3"
+            class="p-4 rounded-2xl bg-[#f2f2f7] border border-black/[0.06] space-y-3"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <input type="checkbox" v-model="inb.enabled" :id="'inb_' + idx" class="w-4 h-4 rounded text-apple-blue bg-black/40">
-                <label :for="'inb_' + idx" class="font-semibold text-white uppercase">{{ inb.tag || inb.type }}</label>
-                <span class="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-apple-subtext font-mono uppercase">{{ inb.type }}</span>
+                <input type="checkbox" v-model="inb.enabled" :id="'inb_' + idx" class="w-4 h-4 rounded text-[#0071e3]">
+                <label :for="'inb_' + idx" class="font-semibold text-[#1d1d1f] uppercase">{{ inb.tag || inb.type }}</label>
+                <span class="text-[10px] px-2 py-0.5 rounded-full bg-white text-[#86868b] font-mono uppercase border border-black/[0.06]">{{ inb.type }}</span>
               </div>
-              <button @click="removeInbound(idx)" class="text-apple-red hover:underline text-xs">移除协议</button>
+              <button @click="removeInbound(idx)" class="text-[#ff3b30] hover:underline text-xs">移除协议</button>
             </div>
 
             <!-- 监听端口与基础设置 -->
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="block text-[11px] text-apple-subtext mb-1">监听端口</label>
-                <input v-model.number="inb.listen_port" type="number" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-white font-mono text-xs focus:outline-none">
+                <label class="block text-[11px] text-[#86868b] mb-1">监听端口</label>
+                <input v-model.number="inb.listen_port" type="number" class="w-full px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-xs focus:outline-none focus:border-[#0071e3]">
               </div>
               <div>
-                <label class="block text-[11px] text-apple-subtext mb-1">协议别名标签 (Tag)</label>
-                <input v-model="inb.tag" type="text" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-white font-mono text-xs focus:outline-none">
+                <label class="block text-[11px] text-[#86868b] mb-1">协议别名标签 (Tag)</label>
+                <input v-model="inb.tag" type="text" class="w-full px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-xs focus:outline-none focus:border-[#0071e3]">
               </div>
             </div>
 
             <!-- VLESS Reality 专属参数 -->
-            <div v-if="inb.type === 'vless' || inb.type === 'grpc-reality'" class="space-y-2 pt-2 border-t border-white/5">
+            <div v-if="inb.type === 'vless' || inb.type === 'grpc-reality'" class="space-y-2 pt-2 border-t border-black/[0.06]">
               <div class="flex items-center justify-between">
-                <span class="text-[11px] text-apple-subtext font-medium">Reality 伪装与密钥配置</span>
-                <button type="button" @click="regenerateRealityKeys(inb)" class="text-[11px] text-apple-blue hover:underline">🎲 重新生成公私钥对</button>
+                <span class="text-[11px] text-[#86868b] font-medium">Reality 伪装与密钥配置</span>
+                <button type="button" @click="regenerateRealityKeys(inb)" class="text-[11px] text-[#0071e3] hover:underline">🎲 重新生成公私钥对</button>
               </div>
               <div class="grid grid-cols-2 gap-2">
-                <input v-model="inb.options.server_name" placeholder="SNI 域名 (如: gateway.icloud.com)" class="px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-white font-mono text-[11px] focus:outline-none">
-                <input v-model="inb.options.short_id" placeholder="Short ID (如: 0123456789abcdef)" class="px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-white font-mono text-[11px] focus:outline-none">
+                <input v-model="inb.options.server_name" placeholder="SNI 域名 (如: gateway.icloud.com)" class="px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
+                <input v-model="inb.options.short_id" placeholder="Short ID (如: 0123456789abcdef)" class="px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
               </div>
-              <input v-model="inb.options.public_key" placeholder="Reality 公钥 Public Key" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-white font-mono text-[11px] focus:outline-none">
+              <input v-model="inb.options.public_key" placeholder="Reality 公钥 Public Key" class="w-full px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
             </div>
 
             <!-- Hysteria 2 / TUIC / Shadowsocks 专属参数 -->
-            <div v-if="inb.type === 'hysteria2' || inb.type === 'tuic'" class="space-y-2 pt-2 border-t border-white/5">
-              <label class="block text-[11px] text-apple-subtext">SNI 伪装域名</label>
-              <input v-model="inb.options.server_name" placeholder="留空则自动使用节点客户端地址" class="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-white font-mono text-[11px] focus:outline-none">
+            <div v-if="inb.type === 'hysteria2' || inb.type === 'tuic'" class="space-y-2 pt-2 border-t border-black/[0.06]">
+              <label class="block text-[11px] text-[#86868b]">SNI 伪装域名</label>
+              <input v-model="inb.options.server_name" placeholder="留空则自动使用节点客户端地址" class="w-full px-3 py-2 rounded-xl bg-white border border-black/10 text-[#1d1d1f] font-mono text-[11px] focus:outline-none">
             </div>
           </div>
         </div>
 
-        <div class="pt-3 border-t border-white/10 flex justify-end gap-2">
-          <button @click="inboundsModal.show = false" class="px-4 py-2 rounded-full bg-white/[0.08] text-apple-subtext text-xs font-medium apple-press">取消</button>
-          <button @click="saveInbounds" class="px-5 py-2 rounded-full bg-apple-blue text-white text-xs font-medium apple-spring apple-press">保存并推送至节点</button>
+        <div class="pt-3 border-t border-black/[0.06] flex justify-end gap-2">
+          <button @click="inboundsModal.show = false" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] text-xs font-medium apple-press">取消</button>
+          <button @click="saveInbounds" class="px-5 py-2 rounded-full bg-[#0071e3] text-white text-xs font-medium apple-spring apple-press shadow-sm">保存并推送至节点</button>
         </div>
       </div>
     </div>
 
-    <!-- 弹窗 4: 单机全协议分享链接 (Apple Links Sheet) -->
-    <div v-if="shareModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-xl w-full max-h-[85vh] rounded-3xl p-6 border border-white/15 shadow-2xl flex flex-col space-y-4">
-        <div class="flex items-start justify-between pb-3 border-b border-white/10">
+    <!-- 弹窗 4: 单机全协议分享链接 (Apple Sheet) -->
+    <div v-if="shareModal.show" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-xl w-full max-h-[85vh] rounded-3xl p-6 flex flex-col space-y-4">
+        <div class="flex items-start justify-between pb-3 border-b border-black/[0.06]">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">单机各协议明文直链</h3>
-            <p class="text-xs text-apple-subtext mt-0.5">节点【{{ shareModal.node?.name }}】已开放的所有协议独立导入链接</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">单机各协议明文直链</h3>
+            <p class="text-xs text-[#86868b] mt-0.5">节点【{{ shareModal.node?.name }}】已开放的所有协议独立导入链接</p>
           </div>
-          <button @click="shareModal.show = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="shareModal.show = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
 
         <div class="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
-          <div v-if="shareModal.links.length === 0" class="py-12 text-center text-apple-subtext">
+          <div v-if="shareModal.links.length === 0" class="py-12 text-center text-[#86868b]">
             该节点暂未配置可用的入站协议。
           </div>
           <div 
             v-for="(item, idx) in shareModal.links" 
             :key="idx"
-            class="p-4 rounded-2xl bg-[#2c2c2e]/60 border border-white/10 space-y-2.5"
+            class="p-4 rounded-2xl bg-[#f2f2f7] border border-black/[0.06] space-y-2.5"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="font-semibold text-white">{{ item.name }}</span>
-                <span class="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-apple-subtext font-mono uppercase">{{ item.protocol }} · {{ item.port }}</span>
+                <span class="font-semibold text-[#1d1d1f]">{{ item.name }}</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full bg-white text-[#86868b] font-mono uppercase border border-black/[0.06]">{{ item.protocol }} · {{ item.port }}</span>
               </div>
-              <button @click="openQr(item.link, item.name)" class="text-apple-blue hover:underline text-[11px]">查看二维码</button>
+              <button @click="openQr(item.link, item.name)" class="text-[#0071e3] hover:underline text-[11px] font-medium">查看二维码</button>
             </div>
-            <div class="p-2.5 bg-black/60 rounded-xl border border-white/10 font-mono text-[11px] text-white truncate select-all">
+            <div class="p-2.5 bg-white rounded-xl border border-black/10 font-mono text-[11px] text-[#1d1d1f] truncate select-all">
               {{ item.link }}
             </div>
             <div class="flex justify-end">
-              <button @click="copyText(item.link)" class="px-4 py-1.5 rounded-full bg-apple-blue/15 hover:bg-apple-blue/25 text-apple-blue text-[11px] font-medium apple-press border border-apple-blue/20">
+              <button @click="copyText(item.link)" class="px-4 py-1.5 rounded-full bg-[#0071e3]/10 hover:bg-[#0071e3]/20 text-[#0071e3] text-[11px] font-medium apple-press border border-[#0071e3]/20">
                 复制链接
               </button>
             </div>
           </div>
         </div>
 
-        <div class="pt-2 border-t border-white/10 flex justify-end">
-          <button @click="shareModal.show = false" class="px-5 py-2 rounded-full bg-white/[0.08] text-white text-xs font-medium apple-press">关闭</button>
+        <div class="pt-2 border-t border-black/[0.06] flex justify-end">
+          <button @click="shareModal.show = false" class="px-5 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#1d1d1f] text-xs font-medium apple-press border border-black/[0.06]">关闭</button>
         </div>
       </div>
     </div>
 
-    <!-- 弹窗 5: 添加节点 (Apple Add Node Sheet) -->
-    <div v-if="showAddNodeModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-md w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-4 text-xs">
+    <!-- 弹窗 5: 添加节点 (Apple Sheet) -->
+    <div v-if="showAddNodeModal" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-md w-full rounded-3xl p-6 space-y-4 text-xs">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">添加分布式服务节点</h3>
-            <p class="text-apple-subtext mt-0.5">创建节点实例并自动生成专属单行安装命令</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">添加分布式服务节点</h3>
+            <p class="text-[#86868b] mt-0.5">创建节点实例并自动生成专属单行安装命令</p>
           </div>
-          <button @click="showAddNodeModal = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="showAddNodeModal = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
 
         <form @submit.prevent="createNode" class="space-y-3.5">
           <div>
-            <label class="block text-apple-subtext mb-1 font-medium">节点名称</label>
-            <input v-model="nodeForm.name" required placeholder="如: 香港01-电信优化" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white focus:outline-none focus:border-apple-blue">
+            <label class="block text-[#86868b] mb-1 font-medium">节点名称</label>
+            <input v-model="nodeForm.name" required placeholder="如: 香港01-电信优化" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
           </div>
 
           <div>
-            <label class="block text-apple-subtext mb-1 font-medium">客户端连接地址 (可选)</label>
-            <input v-model="nodeForm.address" placeholder="域名或公网IP (留空则在首次上线时自动探测)" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+            <label class="block text-[#86868b] mb-1 font-medium">客户端连接地址 (可选)</label>
+            <input v-model="nodeForm.address" placeholder="域名或公网IP (留空则在首次上线时自动探测)" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">流量计算倍率</label>
-              <input v-model.number="nodeForm.rate" type="number" step="0.1" min="0" placeholder="1.0" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">流量计算倍率</label>
+              <input v-model.number="nodeForm.rate" type="number" step="0.1" min="0" placeholder="1.0" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
             </div>
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">网络架构预设</label>
-              <select v-model="nodeForm.preset" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">网络架构预设</label>
+              <select v-model="nodeForm.preset" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
                 <option value="global">境外直连 (原生 443/8443)</option>
                 <option value="cdn">CDN 加速 (WebSocket/gRPC)</option>
                 <option value="nat">NAT 端口转发机</option>
@@ -947,41 +944,55 @@
             </div>
           </div>
 
-          <!-- 隐藏节点开关 -->
-          <div class="p-3 bg-white/[0.04] rounded-xl border border-white/5 flex items-center justify-between">
-            <div>
-              <div class="font-medium text-white">在用户订阅中隐藏</div>
-              <div class="text-[11px] text-apple-subtext">开启后仅供管理员可见与专线中继调度</div>
+          <!-- 启用协议选择 (默认高隐蔽抗封) -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-[#86868b] font-medium">开放协议 (默认开启高隐蔽抗封协议)</label>
+              <span class="text-[11px] text-[#0071e3]">推荐 VLESS-WS + Reality</span>
             </div>
-            <input type="checkbox" v-model="nodeForm.hidden" class="w-4 h-4 rounded text-apple-blue bg-black/40">
+            <div class="grid grid-cols-2 gap-2 p-3 bg-[#f2f2f7] rounded-xl border border-black/[0.06]">
+              <label v-for="p in allProtocols" :key="p.key" class="flex items-center gap-2 text-[12px] text-[#1d1d1f] cursor-pointer select-none">
+                <input type="checkbox" :value="p.key" v-model="nodeForm.enabled_protocols" class="w-4 h-4 rounded text-[#0071e3] border-gray-300">
+                <span class="truncate">{{ p.icon }} {{ p.name }}</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 隐藏节点开关 -->
+          <div class="p-3 bg-[#f2f2f7] rounded-xl border border-black/[0.06] flex items-center justify-between">
+            <div>
+              <div class="font-medium text-[#1d1d1f]">在用户订阅中隐藏</div>
+              <div class="text-[11px] text-[#86868b]">开启后仅供管理员可见与专线中继调度</div>
+            </div>
+            <input type="checkbox" v-model="nodeForm.hidden" class="w-4 h-4 rounded text-[#0071e3]">
           </div>
 
           <div class="pt-2 flex justify-end gap-2">
-            <button type="button" @click="showAddNodeModal = false" class="px-4 py-2 rounded-full bg-white/[0.08] text-apple-subtext apple-press font-medium">取消</button>
-            <button type="submit" class="px-5 py-2 rounded-full bg-apple-blue text-white apple-spring apple-press font-medium">立即生成接入命令</button>
+            <button type="button" @click="showAddNodeModal = false" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] apple-press font-medium">取消</button>
+            <button type="submit" class="px-5 py-2 rounded-full bg-[#0071e3] text-white apple-spring apple-press font-medium shadow-sm">立即生成接入命令</button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- 弹窗 6: 安装接入命令 (Apple Code Sheet) -->
-    <div v-if="selectedNodeForInstall" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-xl w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-4 text-xs">
+    <!-- 弹窗 6: 安装接入命令 (Apple Sheet) -->
+    <div v-if="selectedNodeForInstall" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-xl w-full rounded-3xl p-6 space-y-4 text-xs">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">单行安装接入命令</h3>
-            <p class="text-apple-subtext mt-0.5">在目标服务器执行即可自动配置 Sing-box 并连回当前主控</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">单行安装接入命令</h3>
+            <p class="text-[#86868b] mt-0.5">在目标服务器执行即可自动配置 Sing-box 并连回当前主控</p>
           </div>
-          <button @click="selectedNodeForInstall = null" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="selectedNodeForInstall = null" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
 
         <div class="space-y-3">
-          <div class="p-4 bg-black/80 rounded-2xl border border-white/10 font-mono text-[11px] text-white/90 break-all select-all leading-relaxed">
+          <div class="p-4 bg-[#f2f2f7] rounded-2xl border border-black/10 font-mono text-[11px] text-[#1d1d1f] break-all select-all leading-relaxed">
             {{ getAdaptedInstallCommand(selectedNodeForInstall) }}
           </div>
           <div class="flex items-center justify-between">
-            <span class="text-apple-subtext text-[11px]">支持 Debian / Ubuntu / CentOS / Alpine / Arch</span>
-            <button @click="copyText(getAdaptedInstallCommand(selectedNodeForInstall))" class="px-5 py-2 rounded-full bg-apple-blue text-white font-medium apple-spring apple-press">
+            <span class="text-[#86868b] text-[11px]">支持 Debian / Ubuntu / CentOS / Alpine / Arch</span>
+            <button @click="copyText(getAdaptedInstallCommand(selectedNodeForInstall))" class="px-5 py-2 rounded-full bg-[#0071e3] text-white font-medium apple-spring apple-press shadow-sm">
               一键复制命令
             </button>
           </div>
@@ -989,217 +1000,217 @@
       </div>
     </div>
 
-    <!-- 弹窗 7: 创建/批量创建用户 (Apple User Sheet) -->
-    <div v-if="showAddUserModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-md w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-4 text-xs">
+    <!-- 弹窗 7: 创建订阅用户 (Apple Sheet) -->
+    <div v-if="showAddUserModal" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-md w-full rounded-3xl p-6 space-y-4 text-xs">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">创建订阅用户</h3>
-            <p class="text-apple-subtext mt-0.5">分配独立鉴权 UUID 与专属订阅 Token</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">创建订阅用户</h3>
+            <p class="text-[#86868b] mt-0.5">分配独立鉴权 UUID 与专属订阅 Token</p>
           </div>
-          <button @click="showAddUserModal = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="showAddUserModal = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
 
         <form @submit.prevent="createUser" class="space-y-3.5">
           <div>
-            <label class="block text-apple-subtext mb-1 font-medium">用户名</label>
-            <input v-model="userForm.username" required placeholder="如: user01" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white focus:outline-none focus:border-apple-blue">
+            <label class="block text-[#86868b] mb-1 font-medium">用户名</label>
+            <input v-model="userForm.username" required placeholder="如: user01" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">流量配额 (GB)</label>
-              <input v-model.number="userForm.traffic_limit_gb" type="number" min="0" placeholder="0为不限" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">流量配额 (GB)</label>
+              <input v-model.number="userForm.traffic_limit_gb" type="number" min="0" placeholder="0为不限" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
             </div>
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">有效天数</label>
-              <input v-model.number="userForm.expire_days" type="number" min="0" placeholder="30" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">有效天数</label>
+              <input v-model.number="userForm.expire_days" type="number" min="0" placeholder="30" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
             </div>
           </div>
           <div class="pt-2 flex justify-end gap-2">
-            <button type="button" @click="showAddUserModal = false" class="px-4 py-2 rounded-full bg-white/[0.08] text-apple-subtext apple-press font-medium">取消</button>
-            <button type="submit" class="px-5 py-2 rounded-full bg-apple-blue text-white apple-spring apple-press font-medium">确认创建</button>
+            <button type="button" @click="showAddUserModal = false" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] apple-press font-medium">取消</button>
+            <button type="submit" class="px-5 py-2 rounded-full bg-[#0071e3] text-white apple-spring apple-press font-medium shadow-sm">确认创建</button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- 弹窗 8: 二维码渲染器 (Apple Minimal QR Modal) -->
-    <div v-if="qrModal.show" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-xs w-full rounded-3xl p-6 border border-white/15 shadow-2xl flex flex-col items-center space-y-4 text-center">
-        <h3 class="text-sm font-semibold text-white tracking-tight">{{ qrModal.title }}</h3>
-        <div class="p-3 bg-white rounded-2xl shadow-inner">
+    <!-- 弹窗 8: 二维码渲染器 (Apple Sheet) -->
+    <div v-if="qrModal.show" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-xs w-full rounded-3xl p-6 flex flex-col items-center space-y-4 text-center">
+        <h3 class="text-sm font-semibold text-[#1d1d1f] tracking-tight">{{ qrModal.title }}</h3>
+        <div class="p-3 bg-[#f2f2f7] rounded-2xl border border-black/10">
           <img :src="'/api/v1/qrcode?text=' + encodeURIComponent(qrModal.url)" alt="QR Code" class="w-48 h-48 block">
         </div>
-        <p class="text-[11px] text-apple-subtext">使用 Shadowrocket / 客户端扫码直接导入</p>
-        <button @click="qrModal.show = false" class="w-full py-2 rounded-full bg-white/[0.08] text-white text-xs font-medium apple-press">
+        <p class="text-[11px] text-[#86868b]">使用 Shadowrocket / 客户端扫码直接导入</p>
+        <button @click="qrModal.show = false" class="w-full py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#1d1d1f] text-xs font-medium apple-press border border-black/10">
           关闭
         </button>
       </div>
     </div>
 
-    <!-- 弹窗 9: 节点实时日志 (Apple Terminal Sheet) -->
-    <div v-if="nodeLogsModal.show" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-2xl w-full max-h-[80vh] rounded-3xl p-6 border border-white/15 shadow-2xl flex flex-col space-y-4">
-        <div class="flex items-start justify-between pb-3 border-b border-white/10">
+    <!-- 弹窗 9: 节点实时日志 (Apple Sheet) -->
+    <div v-if="nodeLogsModal.show" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-2xl w-full max-h-[80vh] rounded-3xl p-6 flex flex-col space-y-4">
+        <div class="flex items-start justify-between pb-3 border-b border-black/[0.06]">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">Sing-box 内核运行日志</h3>
-            <p class="text-xs text-apple-subtext mt-0.5">节点【{{ nodeLogsModal.node?.name }}】近 100 行实时日志</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">Sing-box 内核运行日志</h3>
+            <p class="text-xs text-[#86868b] mt-0.5">节点【{{ nodeLogsModal.node?.name }}】近 100 行实时日志</p>
           </div>
-          <button @click="nodeLogsModal.show = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="nodeLogsModal.show = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
-        <div class="flex-1 overflow-y-auto p-4 bg-black/90 rounded-2xl border border-white/10 font-mono text-[11px] text-white/80 space-y-1">
-          <div v-if="nodeLogsModal.logs.length === 0" class="text-apple-subtext py-8 text-center">暂无日志或正在拉取中...</div>
+        <div class="flex-1 overflow-y-auto p-4 bg-[#f2f2f7] rounded-2xl border border-black/10 font-mono text-[11px] text-[#1d1d1f] space-y-1">
+          <div v-if="nodeLogsModal.logs.length === 0" class="text-[#86868b] py-8 text-center">暂无日志或正在拉取中...</div>
           <div v-for="(line, idx) in nodeLogsModal.logs" :key="idx" class="whitespace-pre-wrap">{{ line }}</div>
         </div>
         <div class="flex justify-end gap-2 pt-2">
-          <button @click="fetchNodeLogs(nodeLogsModal.node)" class="px-4 py-2 rounded-full bg-white/[0.08] text-white text-xs font-medium apple-press">刷新</button>
-          <button @click="nodeLogsModal.show = false" class="px-5 py-2 rounded-full bg-apple-blue text-white text-xs font-medium apple-press">关闭</button>
+          <button @click="fetchNodeLogs(nodeLogsModal.node)" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#1d1d1f] text-xs font-medium apple-press border border-black/10">刷新</button>
+          <button @click="nodeLogsModal.show = false" class="px-5 py-2 rounded-full bg-[#0071e3] text-white text-xs font-medium apple-press shadow-sm">关闭</button>
         </div>
       </div>
     </div>
 
     <!-- 弹窗 10: Sing-box 版本与升级管理 -->
-    <div v-if="showSingboxModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-md w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-4 text-xs">
+    <div v-if="showSingboxModal" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-md w-full rounded-3xl p-6 space-y-4 text-xs">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">Sing-box 内核运维</h3>
-            <p class="text-apple-subtext mt-0.5">主控与分布式节点内核版本检查与热升级</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">Sing-box 内核运维</h3>
+            <p class="text-[#86868b] mt-0.5">主控与分布式节点内核版本检查与热升级</p>
           </div>
-          <button @click="showSingboxModal = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="showSingboxModal = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
-        <div class="p-4 rounded-2xl bg-[#2c2c2e]/60 border border-white/10 space-y-2">
+        <div class="p-4 rounded-2xl bg-[#f2f2f7] border border-black/[0.06] space-y-2">
           <div class="flex justify-between">
-            <span class="text-apple-subtext">当前主控版本</span>
-            <span class="font-mono text-white">{{ singboxInfo.current_version || '未安装' }}</span>
+            <span class="text-[#86868b]">当前主控版本</span>
+            <span class="font-mono text-[#1d1d1f] font-semibold">{{ singboxInfo.current_version || '未安装' }}</span>
           </div>
           <div class="flex justify-between">
-            <span class="text-apple-subtext">官方最新版本</span>
-            <span class="font-mono text-apple-green">{{ singboxInfo.latest_version || '检测中...' }}</span>
+            <span class="text-[#86868b]">官方最新版本</span>
+            <span class="font-mono text-[#34c759] font-semibold">{{ singboxInfo.latest_version || '检测中...' }}</span>
           </div>
         </div>
         <div class="pt-2 flex justify-end gap-2">
-          <button @click="showSingboxModal = false" class="px-4 py-2 rounded-full bg-white/[0.08] text-apple-subtext apple-press font-medium">关闭</button>
-          <button @click="upgradeSingboxCore" class="px-5 py-2 rounded-full bg-apple-blue text-white apple-spring apple-press font-medium">执行一键升级</button>
+          <button @click="showSingboxModal = false" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] apple-press font-medium">关闭</button>
+          <button @click="upgradeSingboxCore" class="px-5 py-2 rounded-full bg-[#0071e3] text-white apple-spring apple-press font-medium shadow-sm">执行一键升级</button>
         </div>
       </div>
     </div>
 
     <!-- 弹窗 11: 编辑节点元数据 -->
-    <div v-if="editNodeModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-md w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-4 text-xs">
+    <div v-if="editNodeModal.show" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-md w-full rounded-3xl p-6 space-y-4 text-xs">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">编辑节点元数据</h3>
-            <p class="text-apple-subtext mt-0.5">修改节点名称、外部客户端地址及显隐状态</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">编辑节点元数据</h3>
+            <p class="text-[#86868b] mt-0.5">修改节点名称、外部客户端地址及显隐状态</p>
           </div>
-          <button @click="editNodeModal.show = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="editNodeModal.show = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
         <form @submit.prevent="saveNodeEdit" class="space-y-3.5">
           <div>
-            <label class="block text-apple-subtext mb-1 font-medium">节点名称</label>
-            <input v-model="editNodeModal.form.name" required class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white focus:outline-none focus:border-apple-blue">
+            <label class="block text-[#86868b] mb-1 font-medium">节点名称</label>
+            <input v-model="editNodeModal.form.name" required class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
           </div>
           <div>
-            <label class="block text-apple-subtext mb-1 font-medium">客户端连接地址</label>
-            <input v-model="editNodeModal.form.address" placeholder="如: hk.domain.com 或 1.2.3.4" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+            <label class="block text-[#86868b] mb-1 font-medium">客户端连接地址</label>
+            <input v-model="editNodeModal.form.address" placeholder="如: hk.domain.com 或 1.2.3.4" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
           </div>
           <div>
-            <label class="block text-apple-subtext mb-1 font-medium">流量倍率</label>
-            <input v-model.number="editNodeModal.form.rate" type="number" step="0.1" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+            <label class="block text-[#86868b] mb-1 font-medium">流量倍率</label>
+            <input v-model.number="editNodeModal.form.rate" type="number" step="0.1" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
           </div>
-          <div class="p-3 bg-white/[0.04] rounded-xl border border-white/5 flex items-center justify-between">
+          <div class="p-3 bg-[#f2f2f7] rounded-xl border border-black/[0.06] flex items-center justify-between">
             <div>
-              <div class="font-medium text-white">订阅中隐藏</div>
-              <div class="text-[11px] text-apple-subtext">屏蔽后不写入普通用户订阅</div>
+              <div class="font-medium text-[#1d1d1f]">订阅中隐藏</div>
+              <div class="text-[11px] text-[#86868b]">屏蔽后不写入普通用户订阅</div>
             </div>
-            <input type="checkbox" v-model="editNodeModal.form.hidden" class="w-4 h-4 rounded text-apple-blue bg-black/40">
+            <input type="checkbox" v-model="editNodeModal.form.hidden" class="w-4 h-4 rounded text-[#0071e3]">
           </div>
           <div class="pt-2 flex justify-end gap-2">
-            <button type="button" @click="editNodeModal.show = false" class="px-4 py-2 rounded-full bg-white/[0.08] text-apple-subtext apple-press font-medium">取消</button>
-            <button type="submit" class="px-5 py-2 rounded-full bg-apple-blue text-white apple-spring apple-press font-medium">保存修改</button>
+            <button type="button" @click="editNodeModal.show = false" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] apple-press font-medium">取消</button>
+            <button type="submit" class="px-5 py-2 rounded-full bg-[#0071e3] text-white apple-spring apple-press font-medium shadow-sm">保存修改</button>
           </div>
         </form>
       </div>
     </div>
 
     <!-- 弹窗 12: 批量生成用户 -->
-    <div v-if="showBatchUserModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-md w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-4 text-xs">
+    <div v-if="showBatchUserModal" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-md w-full rounded-3xl p-6 space-y-4 text-xs">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">批量生成用户</h3>
-            <p class="text-apple-subtext mt-0.5">一次性快速创建一批带有独立配额与订阅的账号</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">批量生成用户</h3>
+            <p class="text-[#86868b] mt-0.5">一次性快速创建一批带有独立配额与订阅的账号</p>
           </div>
-          <button @click="showBatchUserModal = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="showBatchUserModal = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
         <form @submit.prevent="submitBatchUsers" class="space-y-3.5">
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">账号前缀</label>
-              <input v-model="batchForm.prefix" required placeholder="vip" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">账号前缀</label>
+              <input v-model="batchForm.prefix" required placeholder="vip" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
             </div>
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">生成数量</label>
-              <input v-model.number="batchForm.count" type="number" min="1" max="50" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">生成数量</label>
+              <input v-model.number="batchForm.count" type="number" min="1" max="50" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
             </div>
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">流量限制 (GB)</label>
-              <input v-model.number="batchForm.traffic_limit_gb" type="number" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">流量限制 (GB)</label>
+              <input v-model.number="batchForm.traffic_limit_gb" type="number" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
             </div>
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">有效天数</label>
-              <input v-model.number="batchForm.expire_days" type="number" min="1" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">有效天数</label>
+              <input v-model.number="batchForm.expire_days" type="number" min="1" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
             </div>
           </div>
           <div class="pt-2 flex justify-end gap-2">
-            <button type="button" @click="showBatchUserModal = false" class="px-4 py-2 rounded-full bg-white/[0.08] text-apple-subtext apple-press font-medium">取消</button>
-            <button type="submit" class="px-5 py-2 rounded-full bg-apple-blue text-white apple-spring apple-press font-medium">批量创建</button>
+            <button type="button" @click="showBatchUserModal = false" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] apple-press font-medium">取消</button>
+            <button type="submit" class="px-5 py-2 rounded-full bg-[#0071e3] text-white apple-spring apple-press font-medium shadow-sm">批量创建</button>
           </div>
         </form>
       </div>
     </div>
 
     <!-- 弹窗 13: 编辑用户信息 -->
-    <div v-if="editUserModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-      <div class="apple-glass max-w-md w-full rounded-3xl p-6 border border-white/15 shadow-2xl space-y-4 text-xs">
+    <div v-if="editUserModal.show" class="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="apple-sheet max-w-md w-full rounded-3xl p-6 space-y-4 text-xs">
         <div class="flex items-start justify-between">
           <div>
-            <h3 class="text-base font-semibold text-white tracking-tight">编辑订阅用户</h3>
-            <p class="text-apple-subtext mt-0.5">修改【{{ editUserModal.user?.username }}】的配额与有效期限</p>
+            <h3 class="text-base font-semibold text-[#1d1d1f] tracking-tight">编辑订阅用户</h3>
+            <p class="text-[#86868b] mt-0.5">修改【{{ editUserModal.user?.username }}】的配额与有效期限</p>
           </div>
-          <button @click="editUserModal.show = false" class="text-apple-subtext hover:text-white text-lg">✕</button>
+          <button @click="editUserModal.show = false" class="text-[#86868b] hover:text-[#1d1d1f] text-lg">✕</button>
         </div>
         <form @submit.prevent="saveUserEdit" class="space-y-3.5">
           <div>
-            <label class="block text-apple-subtext mb-1 font-medium">用户名</label>
-            <input v-model="editUserModal.form.username" required class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white focus:outline-none focus:border-apple-blue">
+            <label class="block text-[#86868b] mb-1 font-medium">用户名</label>
+            <input v-model="editUserModal.form.username" required class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">流量配额 (GB)</label>
-              <input v-model.number="editUserModal.form.traffic_limit_gb" type="number" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white font-mono focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">流量配额 (GB)</label>
+              <input v-model.number="editUserModal.form.traffic_limit_gb" type="number" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] font-mono focus:outline-none focus:border-[#0071e3]">
             </div>
             <div>
-              <label class="block text-apple-subtext mb-1 font-medium">账号状态</label>
-              <select v-model="editUserModal.form.status" class="w-full px-3.5 py-2.5 rounded-xl bg-[#2c2c2e]/60 border border-white/10 text-white focus:outline-none focus:border-apple-blue">
+              <label class="block text-[#86868b] mb-1 font-medium">账号状态</label>
+              <select v-model="editUserModal.form.status" class="w-full px-3.5 py-2.5 rounded-xl bg-[#f2f2f7] border border-black/10 text-[#1d1d1f] focus:outline-none focus:border-[#0071e3]">
                 <option value="active">正常</option>
                 <option value="suspended">手动熔断</option>
               </select>
             </div>
           </div>
-          <div class="p-3 bg-white/[0.04] rounded-xl border border-white/5 flex items-center justify-between">
-            <span class="text-apple-subtext">快速延长天数</span>
+          <div class="p-3 bg-[#f2f2f7] rounded-xl border border-black/[0.06] flex items-center justify-between">
+            <span class="text-[#86868b]">快速延长天数</span>
             <div class="flex gap-1.5">
-              <button type="button" @click="extendUserDays(30)" class="px-2.5 py-1 rounded-full bg-white/10 text-[11px] text-white apple-press">+30天</button>
-              <button type="button" @click="extendUserDays(90)" class="px-2.5 py-1 rounded-full bg-white/10 text-[11px] text-white apple-press">+90天</button>
+              <button type="button" @click="extendUserDays(30)" class="px-2.5 py-1 rounded-full bg-white text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">+30天</button>
+              <button type="button" @click="extendUserDays(90)" class="px-2.5 py-1 rounded-full bg-white text-[11px] text-[#1d1d1f] apple-press border border-black/[0.06] shadow-sm">+90天</button>
             </div>
           </div>
           <div class="pt-2 flex justify-end gap-2">
-            <button type="button" @click="editUserModal.show = false" class="px-4 py-2 rounded-full bg-white/[0.08] text-apple-subtext apple-press font-medium">取消</button>
-            <button type="submit" class="px-5 py-2 rounded-full bg-apple-blue text-white apple-spring apple-press font-medium">保存用户修改</button>
+            <button type="button" @click="editUserModal.show = false" class="px-4 py-2 rounded-full bg-[#f2f2f7] hover:bg-[#e5e5ea] text-[#86868b] apple-press font-medium">取消</button>
+            <button type="submit" class="px-5 py-2 rounded-full bg-[#0071e3] text-white apple-spring apple-press font-medium shadow-sm">保存用户修改</button>
           </div>
         </form>
       </div>
@@ -1283,7 +1294,7 @@
         const editNodeModal = reactive({ show: false, node: null, form: { name: '', address: '', rate: 1.0, hidden: false } });
         const editUserModal = reactive({ show: false, user: null, form: { username: '', traffic_limit_gb: 100, status: 'active', expire_at: 0 } });
 
-        const nodeForm = reactive({ name: '', address: '', rate: 1.0, preset: 'global', hidden: false });
+        const nodeForm = reactive({ name: '', address: '', rate: 1.0, preset: 'global', hidden: false, enabled_protocols: ['vless-ws', 'vless'] });
         const userForm = reactive({ username: '', traffic_limit_gb: 100, expire_days: 30 });
         const batchForm = reactive({ prefix: 'vip', count: 5, traffic_limit_gb: 100, expire_days: 30 });
         const passForm = reactive({ old_password: '', new_password: '' });
@@ -1445,13 +1456,13 @@
 
         const getAppleProtocolBadgeClass = (color) => {
           const map = {
-            blue: 'bg-apple-blue/10 text-apple-blue border-apple-blue/20',
-            green: 'bg-apple-green/10 text-apple-green border-apple-green/20',
-            orange: 'bg-apple-orange/10 text-apple-orange border-apple-orange/20',
-            red: 'bg-apple-red/10 text-apple-red border-apple-red/20',
-            purple: 'bg-apple-purple/10 text-apple-purple border-apple-purple/20',
-            teal: 'bg-apple-teal/10 text-apple-teal border-apple-teal/20',
-            subtext: 'bg-white/5 text-apple-subtext border-white/10'
+            blue: 'bg-[#0071e3]/10 text-[#0071e3] border-[#0071e3]/20',
+            green: 'bg-[#34c759]/10 text-[#28a745] border-[#34c759]/20',
+            orange: 'bg-[#ff9500]/10 text-[#d97706] border-[#ff9500]/20',
+            red: 'bg-[#ff3b30]/10 text-[#dc2626] border-[#ff3b30]/20',
+            purple: 'bg-[#af52de]/10 text-[#9333ea] border-[#af52de]/20',
+            teal: 'bg-[#30b0c7]/10 text-[#0891b2] border-[#30b0c7]/20',
+            subtext: 'bg-[#f2f2f7] text-[#86868b] border-black/[0.06]'
           };
           return map[color] || map.subtext;
         };
@@ -1511,6 +1522,7 @@
           nodeForm.rate = 1.0;
           nodeForm.preset = 'global';
           nodeForm.hidden = false;
+          nodeForm.enabled_protocols = ['vless-ws', 'vless'];
           showAddNodeModal.value = true;
         };
 
@@ -1918,9 +1930,9 @@
 
         const getUserProgressColor = (user) => {
           const p = calculateUserTrafficPercent(user);
-          if (p >= 90) return 'bg-apple-red';
-          if (p >= 75) return 'bg-apple-orange';
-          return 'bg-apple-blue';
+          if (p >= 90) return 'bg-[#ff3b30]';
+          if (p >= 75) return 'bg-[#ff9500]';
+          return 'bg-[#0071e3]';
         };
 
         const getUserStatusText = (user) => {
@@ -1933,16 +1945,16 @@
 
         const getUserStatusDotClass = (user) => {
           const text = getUserStatusText(user);
-          if (text === '正常') return 'bg-apple-green ring-4 ring-apple-green/20';
-          if (text === '已熔断' || text === '超额停用') return 'bg-apple-red';
-          return 'bg-apple-orange';
+          if (text === '正常') return 'bg-[#34c759] ring-4 ring-[#34c759]/20';
+          if (text === '已熔断' || text === '超额停用') return 'bg-[#ff3b30]';
+          return 'bg-[#ff9500]';
         };
 
         const getUserStatusBadgeClass = (user) => {
           const text = getUserStatusText(user);
-          if (text === '正常') return 'bg-apple-green/10 text-apple-green border border-apple-green/20';
-          if (text === '已熔断' || text === '超额停用') return 'bg-apple-red/10 text-apple-red border border-apple-red/20';
-          return 'bg-apple-orange/10 text-apple-orange border border-apple-orange/20';
+          if (text === '正常') return 'bg-[#34c759]/10 text-[#28a745] border border-[#34c759]/20';
+          if (text === '已熔断' || text === '超额停用') return 'bg-[#ff3b30]/10 text-[#dc2626] border border-[#ff3b30]/20';
+          return 'bg-[#ff9500]/10 text-[#d97706] border border-[#ff9500]/20';
         };
 
         // 挂载生命周期
