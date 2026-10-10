@@ -42,10 +42,13 @@ func TestGetOrCreateDefaultInbounds(t *testing.T) {
 		t.Fatalf("expected at least 4 default inbounds, got %d", len(inbounds))
 	}
 
-	// Verify ports do not conflict with Nginx 80 or 443
+	// Verify ports do not conflict with Nginx 80 or 443 and are 5-digit random ports
 	for _, in := range inbounds {
 		if in.ListenPort == 80 || in.ListenPort == 443 {
 			t.Errorf("inbound %s port %d conflicts with Nginx standard web ports (80/443)", in.Tag, in.ListenPort)
+		}
+		if in.ListenPort < 10000 || in.ListenPort > 65535 {
+			t.Errorf("inbound %s port %d is not a 5-digit random port (expected 10000-65535)", in.Tag, in.ListenPort)
 		}
 	}
 }

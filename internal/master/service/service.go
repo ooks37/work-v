@@ -47,9 +47,21 @@ func GenerateShortID() string {
 
 // EnsureAllNodesInbounds 启动期补齐历史节点的入站配置。
 //
-// 背景: 订阅接口已改为纯读 (避免并发请求各自生成 Reality 密钥互相覆盖,
-// 导致用户拿到的 pbk 与节点实际密钥永久不匹配), 因此入站必须在建节点时就落库。
-// 这里对历史数据做一次性补齐 —— 启动期单写入者, 不存在竞态。
+// GenerateRandomFiveDigitPort 生成 10000 到 64999 之间的随机五位数端口，避免与标准低位端口 (80/443 等) 及节点已有端口冲突
+func GenerateRandomFiveDigitPort(used map[int]bool) int {
+	for {
+		var b [2]byte
+		rand.Read(b[:])
+		val := int(b[0])<<8 | int(b[1])
+		port := 10000 + (val % 55000)
+		if !used[port] {
+			used[port] = true
+			return port
+		}
+	}
+}
+
+// EnsureAllNodesInbounds 启动期补齐历史节点的入站配置，并将历史低位固定端口(<10000)平滑升级为五位数安全随机端口。
 func EnsureAllNodesInbounds() {
 	var nodes []model.Node
 	if err := model.DB.Find(&nodes).Error; err != nil {
@@ -58,19 +70,46 @@ func EnsureAllNodesInbounds() {
 	fixed := 0
 	for i := range nodes {
 		if strings.TrimSpace(nodes[i].InboundsJSON) == "" {
-			GetOrCreateDefaultInbounds(&nodes[i])
+			CreateCustomInbounds(&nodes[i], nil)
 			fixed++
+		} else {
+			// 自动升级低于 10000 的旧版固定端口 (如 80, 443, 2083, 8443 等)
+			var inbounds []common.InboundConfig
+			if err := json.Unmarshal([]byte(nodes[i].InboundsJSON), &inbounds); err == nil && len(inbounds) > 0 {
+				hasLowPort := false
+				usedPorts := make(map[int]bool)
+				for _, in := range inbounds {
+					if in.ListenPort < 10000 {
+						hasLowPort = true
+					} else {
+						usedPorts[in.ListenPort] = true
+					}
+				}
+				if hasLowPort {
+					for idx := range inbounds {
+						if inbounds[idx].ListenPort < 10000 {
+							inbounds[idx].ListenPort = GenerateRandomFiveDigitPort(usedPorts)
+						}
+					}
+					data, _ := json.Marshal(inbounds)
+					nodes[i].InboundsJSON = string(data)
+					model.DB.Model(&nodes[i]).Update("inbounds_json", nodes[i].InboundsJSON)
+					fixed++
+				}
+			}
 		}
 	}
 	if fixed > 0 {
-		log.Printf("[Work-V] 已为 %d 个历史节点补齐入站配置 (Reality 密钥一次性生成并落库)", fixed)
+		log.Printf("[Work-V] 已为 %d 个节点补齐/升级为五位数高防随机端口 (10000~64999)", fixed)
 	}
 }
 
-// CreateCustomInbounds 根据管理员指定的协议选择列表定制创建入站配置
+// CreateCustomInbounds 根据管理员指定的协议选择列表定制创建入站配置 (默认分配高防五位数随机端口)
 func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.InboundConfig {
 	privKey, pubKey, _ := GenerateX25519KeyPair()
 	shortID := GenerateShortID()
+
+	usedPorts := make(map[int]bool)
 
 	protoMap := make(map[string]bool)
 	for _, p := range enabledProtocols {
@@ -87,7 +126,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "vless",
 			Tag:        "vless-reality-in",
-			ListenPort: 2083,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["vless"] || protoMap["reality"] || protoMap["vless-reality"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
@@ -101,7 +140,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "hysteria2",
 			Tag:        "hy2-in",
-			ListenPort: 8443,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["hysteria2"] || protoMap["hy2"],
 			Options: map[string]any{
 				"insecure":  true,
@@ -112,7 +151,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "grpc-reality",
 			Tag:        "grpc-reality-in",
-			ListenPort: 2053,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["grpc-reality"] || protoMap["grpc"],
 			Options: map[string]any{
 				"server_name":  "gateway.icloud.com",
@@ -126,7 +165,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "tuic",
 			Tag:        "tuic-in",
-			ListenPort: 8444,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["tuic"],
 			Options: map[string]any{
 				"congestion_control": "bbr",
@@ -137,7 +176,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "anytls",
 			Tag:        "anytls-in",
-			ListenPort: 8445,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["anytls"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
@@ -147,7 +186,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "shadowsocks",
 			Tag:        "ss-in",
-			ListenPort: 8388,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["shadowsocks"] || protoMap["ss"],
 			Options: map[string]any{
 				"method":   "2022-blake3-aes-128-gcm",
@@ -157,7 +196,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "vless-ws",
 			Tag:        "vless-ws-in",
-			ListenPort: 2096,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["vless-ws"] || protoMap["ws"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
@@ -167,7 +206,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "vmess-ws",
 			Tag:        "vmess-ws-in",
-			ListenPort: 2095,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["vmess-ws"] || protoMap["vmess"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
@@ -177,7 +216,7 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 		{
 			Type:       "trojan",
 			Tag:        "trojan-in",
-			ListenPort: 8446,
+			ListenPort: GenerateRandomFiveDigitPort(usedPorts),
 			Enabled:    protoMap["trojan"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
