@@ -43,9 +43,9 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 	// 2. 外部多端自适应订阅接口
 	r.GET("/sub/:token", sub.HandleSubscription)
 
-	// 3. 节点一键智能安装脚本动态分发
-	r.GET("/install.sh", handleAgentInstallScript)
-	r.GET("/api/v1/install.sh", handleAgentInstallScript)
+	// 3. 节点一键智能安装脚本动态分发 (支持 GET 与 HEAD 状态探测)
+	r.Match([]string{"GET", "HEAD"}, "/install.sh", handleAgentInstallScript)
+	r.Match([]string{"GET", "HEAD"}, "/api/v1/install.sh", handleAgentInstallScript)
 
 	// 4. 二进制产物、CLI 工具与安装脚本安全分发 (严格白名单限制，杜绝任意文件与数据库读取)
 	r.GET("/download/:filename", func(c *gin.Context) {
