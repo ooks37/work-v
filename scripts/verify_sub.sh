@@ -14,6 +14,7 @@ if [ "$NODE_COUNT" -eq 0 ]; then
   echo "未找到有效节点，创建示例香港节点..."
   sqlite3 "$DB" "INSERT INTO nodes (name, address, rate, inbounds_json, token, status, created_at, updated_at) VALUES ('香港-0168高速节点', '38.76.193.152', 1.0, '', 'node_test_token', 'online', datetime('now'), datetime('now'));"
 fi
+sqlite3 "$DB" "UPDATE nodes SET address='38.76.193.152' WHERE deleted_at IS NULL AND (address='自动探测' OR address='' OR address='127.0.0.1');"
 
 
 echo "=============================================="
@@ -24,7 +25,7 @@ echo "订阅总 URL: ${PORTAL_URL}"
 
 echo ""
 echo "[1] 验证面向客户的现代化自服务 HTML 门户:"
-HTML=$(curl -s -k "${PORTAL_URL}")
+HTML=$(curl -s -k -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "${PORTAL_URL}")
 echo "  • 门户主标题匹配: $(echo "$HTML" | grep -c "Work-V 订阅中心")"
 echo "  • 独立节点直连匹配: $(echo "$HTML" | grep -c "独立节点直连")"
 echo "  • 单节点二维码匹配: $(echo "$HTML" | grep -c "单节点码")"
