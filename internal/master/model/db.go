@@ -82,7 +82,7 @@ func SetSetting(key, val string) error {
 	}
 	var s SystemSetting
 	if err := DB.Where("key = ?", key).First(&s).Error; err == nil {
-		return DB.Model(&s).Updates(map[string]any{"value": val, "updated_at": os.Getenv("TZ")}).Error
+		return DB.Model(&s).Updates(map[string]any{"value": val, "updated_at": time.Now()}).Error
 	}
 	return DB.Create(&SystemSetting{Key: key, Value: val}).Error
 }

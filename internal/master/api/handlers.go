@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"work-v/internal/common"
 	"work-v/internal/master/hub"
 	"work-v/internal/master/middleware"
 	"work-v/internal/master/model"
@@ -517,6 +519,230 @@ func HandleGetNodeLinks(c *gin.Context) {
 		"uuid":      userUUID,
 		"links":     links,
 	})
+}
+
+// HandleGetNodeInbounds 获取指定节点的入站协议配置
+func HandleGetNodeInbounds(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var node model.Node
+	if err := model.DB.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		return
+	}
+	inbounds := service.GetOrCreateDefaultInbounds(&node)
+	c.JSON(http.StatusOK, inbounds)
+}
+
+// HandleUpdateNodeInbounds 保存并即时热推节点协议入站配置
+func HandleUpdateNodeInbounds(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var node model.Node
+	if err := model.DB.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		return
+	}
+
+	var inbounds []common.InboundConfig
+	if err := c.ShouldBindJSON(&inbounds); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "协议入站参数格式错误"})
+		return
+	}
+
+	data, err := json.Marshal(inbounds)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "序列化失败"})
+		return
+	}
+
+	node.InboundsJSON = string(data)
+	model.DB.Model(&node).Update("inbounds_json", node.InboundsJSON)
+
+	// 实时推送最新配置至节点
+	go hub.GlobalHub.PushConfigToNode(node.ID)
+
+	c.JSON(http.StatusOK, gin.H{"message": "协议配置已更新并推送到节点", "inbounds": inbounds})
+}
+
+// HandleRestartNodeSingbox 远程重启节点 Sing-box 进程
+func HandleRestartNodeSingbox(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	err := hub.GlobalHub.RestartNodeSingbox(uint(id))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "重启失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "节点 Sing-box 进程已成功重启！"})
+}
+
+// HandleGetNodeLogs 远程实时提取节点 Sing-box 运行日志
+func HandleGetNodeLogs(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	logs, err := hub.GlobalHub.RequestNodeLogs(uint(id))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "获取日志失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"logs": logs})
+}
+
+// HandlePingNode 主控端对目标节点发起 TCP 连通性与延迟探测
+func HandlePingNode(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var node model.Node
+	if err := model.DB.First(&node, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		return
+	}
+
+	addr := strings.TrimSpace(node.Address)
+	if addr == "" || addr == "自动探测" || addr == "127.0.0.1" {
+		c.JSON(http.StatusOK, gin.H{"reachable": false, "latency_ms": 0, "message": "节点未上报有效公网 IP"})
+		return
+	}
+
+	port := 2083
+	var inbounds []common.InboundConfig
+	if err := json.Unmarshal([]byte(node.InboundsJSON), &inbounds); err == nil {
+		for _, in := range inbounds {
+			if in.Enabled && in.ListenPort > 0 {
+				port = in.ListenPort
+				break
+			}
+		}
+	}
+
+	target := net.JoinHostPort(addr, strconv.Itoa(port))
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", target, 3*time.Second)
+	latency := time.Since(start).Milliseconds()
+
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"reachable":  false,
+			"latency_ms": latency,
+			"target":     target,
+			"message":    fmt.Sprintf("TCP 握手失败: %v", err),
+		})
+		return
+	}
+	_ = conn.Close()
+
+	c.JSON(http.StatusOK, gin.H{
+		"reachable":  true,
+		"latency_ms": latency,
+		"target":     target,
+		"message":    "连接正常",
+	})
+}
+
+// HandleBatchCreateUsers 批量创建用户
+func HandleBatchCreateUsers(c *gin.Context) {
+	var req struct {
+		Prefix         string `json:"prefix"`
+		Count          int    `json:"count"`
+		TrafficLimitGB int64  `json:"traffic_limit_gb"`
+		ExpireDays     int64  `json:"expire_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	users, err := service.BatchCreateUsers(req.Prefix, req.Count, req.TrafficLimitGB, req.ExpireDays)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("已成功创建 %d 个用户", len(users)), "users": users})
+}
+
+// HandleBatchResetTraffic 全网用户流量清零
+func HandleBatchResetTraffic(c *gin.Context) {
+	if err := service.ResetAllUsersTraffic(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "全网用户流量已成功清零，状态已重置为正常"})
+}
+
+// HandleRegenerateUserCredentials 重置用户凭据与订阅 Token
+func HandleRegenerateUserCredentials(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var user model.User
+	if err := model.DB.First(&user, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+	oldUUID := user.UUID
+	user.UUID = uuid.New().String()
+	user.SubToken = RandomToken(16)
+	model.DB.Save(&user)
+
+	// 熔断旧凭据
+	hub.GlobalHub.BroadcastCutoffUser(oldUUID)
+
+	// 推送新凭据
+	var nodes []model.Node
+	model.DB.Find(&nodes)
+	for _, n := range nodes {
+		go hub.GlobalHub.PushConfigToNode(n.ID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "用户凭据与订阅 Token 已重置",
+		"uuid":      user.UUID,
+		"sub_token": user.SubToken,
+	})
+}
+
+// HandleBackupDB 下载 SQLite 数据库备份
+func HandleBackupDB(c *gin.Context) {
+	candidates := []string{
+		"data/work-v.db",
+		"work-v.db",
+		"/opt/work-v-master/data/work-v.db",
+	}
+	var target string
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			target = p
+			break
+		}
+	}
+	if target == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到数据库文件"})
+		return
+	}
+	fileName := fmt.Sprintf("work-v-backup-%s.db", time.Now().Format("20060102-150405"))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
+	c.File(target)
+}
+
+// HandleGetSystemSettings 获取全局系统配置
+func HandleGetSystemSettings(c *gin.Context) {
+	domain := model.GetSetting("master_domain", "")
+	enabled, safePath := middleware.GetSafePath()
+	c.JSON(http.StatusOK, gin.H{
+		"master_domain": domain,
+		"safe_path":     safePath,
+		"safe_enabled":  enabled,
+	})
+}
+
+// HandleUpdateSystemSettings 保存全局系统配置
+func HandleUpdateSystemSettings(c *gin.Context) {
+	var req struct {
+		MasterDomain string `json:"master_domain"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	clean := strings.TrimSpace(req.MasterDomain)
+	clean = strings.TrimPrefix(clean, "http://")
+	clean = strings.TrimPrefix(clean, "https://")
+	clean = strings.TrimRight(clean, "/")
+	_ = model.SetSetting("master_domain", clean)
+	c.JSON(http.StatusOK, gin.H{"message": "全局配置已保存", "master_domain": clean})
 }
 
 var (

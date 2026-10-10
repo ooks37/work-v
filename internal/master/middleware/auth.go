@@ -52,6 +52,7 @@ func getJWTSecretKey() []byte {
 
 	fallback := "workv_dynamic_" + fmt.Sprintf("%d", time.Now().UnixNano())
 	SetJWTSecret(fallback)
+	_ = model.SetSetting("jwt_secret", fallback)
 	return []byte(fallback)
 }
 

@@ -15,6 +15,10 @@ const (
 	MsgTypeConfigAck    = "config_ack"     // Agent -> Master: 配置应用回执
 	MsgTypeCutoffUser   = "cutoff_user"    // Master -> Agent: 熔断/踢掉违规/超额用户
 	MsgTypeCommand      = "command"        // Master -> Agent: 运维指令 (重启 sing-box, 重新采集)
+	MsgTypeGetLogsReq   = "get_logs_req"   // Master -> Agent: 请求最近内核运行日志
+	MsgTypeGetLogsResp  = "get_logs_resp"  // Agent -> Master: 响应最近内核日志
+	MsgTypeRestartReq   = "restart_req"    // Master -> Agent: 请求重启 Sing-box 进程
+	MsgTypeRestartResp  = "restart_resp"   // Agent -> Master: 响应重启结果
 )
 
 // WSMessage 统一长连通信帧结构

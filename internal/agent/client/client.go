@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"work-v/internal/agent/collector"
@@ -19,6 +20,7 @@ type AgentClient struct {
 	token     string
 	runner    *runner.SingboxRunner
 	collector *collector.SystemCollector
+	writeMu   sync.Mutex
 }
 
 func NewAgentClient(serverURL, token string, r *runner.SingboxRunner) *AgentClient {
@@ -28,6 +30,12 @@ func NewAgentClient(serverURL, token string, r *runner.SingboxRunner) *AgentClie
 		runner:    r,
 		collector: collector.NewSystemCollector(),
 	}
+}
+
+func (c *AgentClient) safeWriteJSON(conn *websocket.Conn, v any) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return conn.WriteJSON(v)
 }
 
 // Start 启动反向长连并保持自动重连
@@ -68,7 +76,7 @@ func (c *AgentClient) connectAndLoop() error {
 	// 1. 发送握手认证包
 	authMsg, _ := common.NewWSMessage(common.MsgTypeAuthReq, nil)
 	authMsg.NodeToken = c.token
-	if err := conn.WriteJSON(authMsg); err != nil {
+	if err := c.safeWriteJSON(conn, authMsg); err != nil {
 		return err
 	}
 
@@ -122,6 +130,32 @@ func (c *AgentClient) connectAndLoop() error {
 			if err := json.Unmarshal(msg.Payload, &req); err == nil && req.UUID != "" {
 				c.runner.CutoffUser(req.UUID)
 			}
+
+		case common.MsgTypeGetLogsReq:
+			logs := c.runner.GetRecentLogs()
+			respMsg, _ := common.NewWSMessage(common.MsgTypeGetLogsResp, map[string]any{"logs": logs})
+			_ = c.safeWriteJSON(conn, respMsg)
+
+		case common.MsgTypeRestartReq:
+			err := c.runner.Restart()
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
+			}
+			respMsg, _ := common.NewWSMessage(common.MsgTypeRestartResp, map[string]any{
+				"success": err == nil,
+				"error":   errMsg,
+			})
+			_ = c.safeWriteJSON(conn, respMsg)
+
+		case common.MsgTypeCommand:
+			var cmdReq struct {
+				Action string `json:"action"`
+			}
+			_ = json.Unmarshal(msg.Payload, &cmdReq)
+			if cmdReq.Action == "restart" {
+				_ = c.runner.Restart()
+			}
 		}
 	}
 }
@@ -138,7 +172,7 @@ func (c *AgentClient) heartbeatLoop(conn *websocket.Conn, done <-chan struct{}) 
 			// 采集硬件指标
 			stats := c.collector.CollectStats(c.runner.GetPid(), c.runner.IsRunning())
 			msg, _ := common.NewWSMessage(common.MsgTypeHeartbeat, stats)
-			if err := conn.WriteJSON(msg); err != nil {
+			if err := c.safeWriteJSON(conn, msg); err != nil {
 				return
 			}
 
@@ -146,7 +180,7 @@ func (c *AgentClient) heartbeatLoop(conn *websocket.Conn, done <-chan struct{}) 
 			usersTraffic := c.runner.CollectTraffic()
 			if len(usersTraffic) > 0 {
 				tMsg, _ := common.NewWSMessage(common.MsgTypeTraffic, common.TrafficReportPayload{Users: usersTraffic})
-				_ = conn.WriteJSON(tMsg)
+				_ = c.safeWriteJSON(conn, tMsg)
 			}
 		}
 	}

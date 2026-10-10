@@ -37,6 +37,8 @@ type SingboxRunner struct {
 	lastConns     map[string]connTrafficSnap // connID -> snap
 	totalUpSnap   int64
 	totalDownSnap int64
+	logMu         sync.Mutex
+	logs          []string
 }
 
 func NewSingboxRunner(singboxPath, configDir string) *SingboxRunner {
@@ -56,6 +58,7 @@ func NewSingboxRunner(singboxPath, configDir string) *SingboxRunner {
 		configDir:   configDir,
 		clashSecret: hex.EncodeToString(secretBytes),
 		lastConns:   make(map[string]connTrafficSnap),
+		logs:        make([]string, 0, 150),
 	}
 }
 
@@ -116,6 +119,56 @@ func (r *SingboxRunner) ApplyConfig(payload *common.NodeConfigPayload) error {
 	return r.restartProcess(configFile)
 }
 
+type rollingLogWriter struct {
+	runner *SingboxRunner
+}
+
+func (w *rollingLogWriter) Write(p []byte) (n int, err error) {
+	n = len(p)
+	text := strings.TrimSpace(string(p))
+	if text != "" {
+		w.runner.appendLog(text)
+	}
+	os.Stdout.Write(p)
+	return n, nil
+}
+
+func (r *SingboxRunner) appendLog(msg string) {
+	r.logMu.Lock()
+	defer r.logMu.Unlock()
+	lines := strings.Split(msg, "\n")
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		r.logs = append(r.logs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), l))
+	}
+	if len(r.logs) > 150 {
+		r.logs = r.logs[len(r.logs)-150:]
+	}
+}
+
+// GetRecentLogs 获取最近内核运行日志
+func (r *SingboxRunner) GetRecentLogs() []string {
+	r.logMu.Lock()
+	defer r.logMu.Unlock()
+	res := make([]string, len(r.logs))
+	copy(res, r.logs)
+	return res
+}
+
+// Restart 手动重启 Sing-box 内核进程
+func (r *SingboxRunner) Restart() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	configFile := filepath.Join(r.configDir, "sing-box.json")
+	if _, err := os.Stat(configFile); err != nil {
+		return fmt.Errorf("配置文件不存在: %w", err)
+	}
+	return r.restartProcess(configFile)
+}
+
 func (r *SingboxRunner) restartProcess(configFile string) error {
 	if r.cmd != nil && r.cmd.Process != nil && r.running {
 		log.Println("[Sing-box] 正在重启进程以加载新配置...")
@@ -125,15 +178,18 @@ func (r *SingboxRunner) restartProcess(configFile string) error {
 	}
 
 	cmd := exec.Command(r.singboxPath, "run", "-c", configFile)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	logW := &rollingLogWriter{runner: r}
+	cmd.Stdout = logW
+	cmd.Stderr = logW
 
 	if err := cmd.Start(); err != nil {
 		r.running = false
+		r.appendLog("进程启动失败: " + err.Error())
 		return fmt.Errorf("启动 sing-box 进程失败: %w", err)
 	}
 	r.cmd = cmd
 	r.running = true
+	r.appendLog(fmt.Sprintf("Sing-box 进程启动成功, PID=%d", cmd.Process.Pid))
 	log.Printf("[Sing-box] 进程启动成功, PID=%d", cmd.Process.Pid)
 
 	// 后台等待协程
@@ -142,6 +198,7 @@ func (r *SingboxRunner) restartProcess(configFile string) error {
 		r.mu.Lock()
 		r.running = false
 		r.mu.Unlock()
+		r.appendLog("Sing-box 进程已退出")
 		log.Println("[Sing-box] 进程已退出")
 	}()
 
@@ -284,7 +341,7 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 				}
 			}
 		}
-		if targetUUID == "" && len(activeUsers) > 0 {
+		if targetUUID == "" && len(activeUsers) == 1 {
 			targetUUID = activeUsers[0].UUID
 		}
 
@@ -309,14 +366,14 @@ func (r *SingboxRunner) CollectTraffic() []common.UserDeltaTraffic {
 		}
 	}
 
-	// 全局增量兜底
+	// 全局增量兜底 (仅单用户独占节点时启用，多用户节点严禁误扣用户0)
 	if data.UploadTotal > r.totalUpSnap || data.DownloadTotal > r.totalDownSnap {
 		globalDeltaUp := data.UploadTotal - r.totalUpSnap
 		globalDeltaDown := data.DownloadTotal - r.totalDownSnap
 		r.totalUpSnap = data.UploadTotal
 		r.totalDownSnap = data.DownloadTotal
 
-		if len(userDeltas) == 0 && (globalDeltaUp > 0 || globalDeltaDown > 0) && len(activeUsers) > 0 {
+		if len(userDeltas) == 0 && (globalDeltaUp > 0 || globalDeltaDown > 0) && len(activeUsers) == 1 {
 			primaryUUID := activeUsers[0].UUID
 			userDeltas[primaryUUID] = &common.UserDeltaTraffic{
 				UUID: primaryUUID,
@@ -561,6 +618,107 @@ func generateSingboxJSON(payload *common.NodeConfigPayload, configDir string, se
 					"enabled":  true,
 					"insecure": true,
 				},
+			}
+			inbounds = append(inbounds, inbound)
+
+		case "shadowsocks":
+			method, _ := in.Options["method"].(string)
+			if method == "" {
+				method = "2022-blake3-aes-128-gcm"
+			}
+			ssPassword, _ := in.Options["password"].(string)
+			if ssPassword == "" {
+				ssPassword = "d29ya3YxMjM0NTY3ODkwMQ=="
+			}
+			users := make([]map[string]any, 0)
+			for _, u := range payload.Users {
+				if u.Status == "active" {
+					pwd := u.Password
+					if pwd == "" {
+						pwd = ssPassword
+					}
+					users = append(users, map[string]any{
+						"name":     u.Username,
+						"password": pwd,
+					})
+				}
+			}
+			inbound := map[string]any{
+				"type":        "shadowsocks",
+				"tag":         in.Tag,
+				"listen":      "::",
+				"listen_port": in.ListenPort,
+				"method":      method,
+				"password":    ssPassword,
+			}
+			if len(users) > 0 {
+				inbound["users"] = users
+			}
+			inbounds = append(inbounds, inbound)
+
+		case "vless-ws":
+			users := make([]map[string]any, 0)
+			for _, u := range payload.Users {
+				if u.Status == "active" {
+					users = append(users, map[string]any{
+						"name": u.Username,
+						"uuid": u.UUID,
+					})
+				}
+			}
+			wsPath, _ := in.Options["path"].(string)
+			if wsPath == "" {
+				wsPath = "/ws"
+			}
+			serverName, _ := in.Options["server_name"].(string)
+			tlsOpt := map[string]any{
+				"enabled":          true,
+				"certificate_path": certPath,
+				"key_path":         keyPath,
+			}
+			if serverName != "" {
+				tlsOpt["server_name"] = serverName
+			}
+			inbound := map[string]any{
+				"type":        "vless",
+				"tag":         in.Tag,
+				"listen":      "::",
+				"listen_port": in.ListenPort,
+				"users":       users,
+				"transport": map[string]any{
+					"type": "ws",
+					"path": wsPath,
+				},
+				"tls": tlsOpt,
+			}
+			inbounds = append(inbounds, inbound)
+
+		case "trojan":
+			users := make([]map[string]any, 0)
+			for _, u := range payload.Users {
+				if u.Status == "active" {
+					users = append(users, map[string]any{
+						"name":     u.Username,
+						"password": u.UUID,
+					})
+				}
+			}
+			serverName, _ := in.Options["server_name"].(string)
+			tlsOpt := map[string]any{
+				"enabled":          true,
+				"certificate_path": certPath,
+				"key_path":         keyPath,
+			}
+			if serverName != "" {
+				tlsOpt["server_name"] = serverName
+			}
+			inbound := map[string]any{
+				"type":        "trojan",
+				"tag":         in.Tag,
+				"listen":      "::",
+				"listen_port": in.ListenPort,
+				"users":       users,
+				"tls":         tlsOpt,
 			}
 			inbounds = append(inbounds, inbound)
 		}

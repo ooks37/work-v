@@ -32,23 +32,62 @@ type AgentConn struct {
 	SendChan     chan *common.WSMessage
 	LastSeen     time.Time
 	lastDBUpdate time.Time
+	closeMu      sync.Mutex
+	closed       bool
+}
+
+// Close 线程安全地关闭连接与发送通道 (幂等关闭，杜绝重复关闭 panic)
+func (a *AgentConn) Close() {
+	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
+	if !a.closed {
+		a.closed = true
+		close(a.SendChan)
+		a.Conn.Close()
+	}
+}
+
+// SafeSend 线程安全地下发消息 (防向已关闭通道发送导致的致命 panic)
+func (a *AgentConn) SafeSend(msg *common.WSMessage, timeout time.Duration) bool {
+	a.closeMu.Lock()
+	if a.closed {
+		a.closeMu.Unlock()
+		return false
+	}
+	a.closeMu.Unlock()
+
+	defer func() {
+		_ = recover()
+	}()
+
+	select {
+	case a.SendChan <- msg:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // Hub 全局节点调度连接池
 type Hub struct {
-	mu         sync.RWMutex
-	agents     map[uint]*AgentConn      // NodeID -> AgentConn
-	tokenMap   map[string]uint          // NodeToken -> NodeID
-	onTraffic  func(nodeID uint, users []common.UserDeltaTraffic)
-	onNeedConf func(nodeID uint) (*common.NodeConfigPayload, error)
+	mu             sync.RWMutex
+	agents         map[uint]*AgentConn      // NodeID -> AgentConn
+	tokenMap       map[string]uint          // NodeToken -> NodeID
+	onTraffic      func(nodeID uint, users []common.UserDeltaTraffic)
+	onNeedConf     func(nodeID uint) (*common.NodeConfigPayload, error)
+	waiterMu       sync.Mutex
+	logWaiters     map[uint]chan []string
+	restartWaiters map[uint]chan error
 }
 
 var GlobalHub = NewHub()
 
 func NewHub() *Hub {
 	return &Hub{
-		agents:   make(map[uint]*AgentConn),
-		tokenMap: make(map[string]uint),
+		agents:         make(map[uint]*AgentConn),
+		tokenMap:       make(map[string]uint),
+		logWaiters:     make(map[uint]chan []string),
+		restartWaiters: make(map[uint]chan error),
 	}
 }
 
@@ -164,8 +203,7 @@ func (h *Hub) register(agent *AgentConn) {
 
 	// 若存在旧连接，优雅关闭旧连接
 	if old, exists := h.agents[agent.NodeID]; exists {
-		close(old.SendChan)
-		old.Conn.Close()
+		old.Close()
 	}
 
 	h.agents[agent.NodeID] = agent
@@ -179,7 +217,7 @@ func (h *Hub) unregister(agent *AgentConn) {
 	if cur, exists := h.agents[agent.NodeID]; exists && cur == agent {
 		delete(h.agents, agent.NodeID)
 		delete(h.tokenMap, agent.NodeToken)
-		close(agent.SendChan)
+		agent.Close()
 
 		// 标为离线
 		model.DB.Model(&model.Node{}).Where("id = ?", agent.NodeID).Update("status", "offline")
@@ -210,12 +248,10 @@ func (h *Hub) PushConfigToNode(nodeID uint) error {
 		return err
 	}
 
-	select {
-	case agent.SendChan <- msg:
-		return nil
-	case <-time.After(3 * time.Second):
-		return fmt.Errorf("推送配置超时")
+	if !agent.SafeSend(msg, 3*time.Second) {
+		return fmt.Errorf("推送配置超时或连接已断开")
 	}
+	return nil
 }
 
 // BroadcastCutoffUser 向所有在线节点广播熔断指定用户 (踢下线)
@@ -229,10 +265,7 @@ func (h *Hub) BroadcastCutoffUser(uuid string) {
 	}
 
 	for _, agent := range h.agents {
-		select {
-		case agent.SendChan <- msg:
-		default:
-		}
+		agent.SafeSend(msg, 500*time.Millisecond)
 	}
 }
 
@@ -244,11 +277,93 @@ func (h *Hub) IsNodeOnline(nodeID uint) bool {
 	return exists
 }
 
+// RestartNodeSingbox 远程重启节点上的 sing-box 进程
+func (h *Hub) RestartNodeSingbox(nodeID uint) error {
+	h.mu.RLock()
+	agent, ok := h.agents[nodeID]
+	h.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("节点 %d 未在线", nodeID)
+	}
+
+	ch := make(chan error, 1)
+	h.waiterMu.Lock()
+	h.restartWaiters[nodeID] = ch
+	h.waiterMu.Unlock()
+	defer func() {
+		h.waiterMu.Lock()
+		delete(h.restartWaiters, nodeID)
+		h.waiterMu.Unlock()
+	}()
+
+	msg, _ := common.NewWSMessage(common.MsgTypeRestartReq, nil)
+	if !agent.SafeSend(msg, 2*time.Second) {
+		return fmt.Errorf("向节点发送重启指令超时")
+	}
+
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(6 * time.Second):
+		return fmt.Errorf("等待节点重启响应超时")
+	}
+}
+
+// RequestNodeLogs 获取指定节点的最新 Sing-box 运行日志
+func (h *Hub) RequestNodeLogs(nodeID uint) ([]string, error) {
+	h.mu.RLock()
+	agent, ok := h.agents[nodeID]
+	h.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("节点 %d 未在线", nodeID)
+	}
+
+	ch := make(chan []string, 1)
+	h.waiterMu.Lock()
+	h.logWaiters[nodeID] = ch
+	h.waiterMu.Unlock()
+	defer func() {
+		h.waiterMu.Lock()
+		delete(h.logWaiters, nodeID)
+		h.waiterMu.Unlock()
+	}()
+
+	msg, _ := common.NewWSMessage(common.MsgTypeGetLogsReq, nil)
+	if !agent.SafeSend(msg, 2*time.Second) {
+		return nil, fmt.Errorf("向节点发送日志请求超时")
+	}
+
+	select {
+	case logs := <-ch:
+		return logs, nil
+	case <-time.After(4 * time.Second):
+		return nil, fmt.Errorf("等待节点日志响应超时")
+	}
+}
+
+// SyncOfflineNodes 同步数据库中脱机节点的状态
+func (h *Hub) SyncOfflineNodes() {
+	h.mu.RLock()
+	onlineMap := make(map[uint]bool)
+	for id := range h.agents {
+		onlineMap[id] = true
+	}
+	h.mu.RUnlock()
+
+	var nodes []model.Node
+	model.DB.Where("status = ?", "online").Find(&nodes)
+	for _, n := range nodes {
+		if !onlineMap[n.ID] {
+			model.DB.Model(&n).Update("status", "offline")
+		}
+	}
+}
+
 // readPump 节点心跳与流量数据监听
 func (a *AgentConn) readPump(h *Hub) {
 	defer func() {
 		h.unregister(a)
-		a.Conn.Close()
+		a.Close()
 	}()
 
 	a.Conn.SetReadLimit(1024 * 1024) // 1MB
@@ -291,6 +406,43 @@ func (a *AgentConn) readPump(h *Hub) {
 			if err := json.Unmarshal(msg.Payload, &report); err == nil && h.onTraffic != nil {
 				h.onTraffic(a.NodeID, report.Users)
 			}
+
+		case common.MsgTypeGetLogsResp:
+			var data struct {
+				Logs []string `json:"logs"`
+			}
+			if err := json.Unmarshal(msg.Payload, &data); err == nil {
+				h.waiterMu.Lock()
+				ch, ok := h.logWaiters[a.NodeID]
+				h.waiterMu.Unlock()
+				if ok {
+					select {
+					case ch <- data.Logs:
+					default:
+					}
+				}
+			}
+
+		case common.MsgTypeRestartResp:
+			var data struct {
+				Success bool   `json:"success"`
+				Error   string `json:"error"`
+			}
+			if err := json.Unmarshal(msg.Payload, &data); err == nil {
+				h.waiterMu.Lock()
+				ch, ok := h.restartWaiters[a.NodeID]
+				h.waiterMu.Unlock()
+				if ok {
+					var resErr error
+					if !data.Success {
+						resErr = fmt.Errorf("%s", data.Error)
+					}
+					select {
+					case ch <- resErr:
+					default:
+					}
+				}
+			}
 		}
 	}
 }
@@ -300,7 +452,7 @@ func (a *AgentConn) writePump() {
 	ticker := time.NewTicker(20 * time.Second)
 	defer func() {
 		ticker.Stop()
-		a.Conn.Close()
+		a.Close()
 	}()
 
 	for {

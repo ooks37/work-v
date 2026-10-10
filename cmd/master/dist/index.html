@@ -50,9 +50,9 @@
       font-family: 'JetBrains Mono', monospace;
     }
     .glass-panel {
-      background: rgba(30, 41, 59, 0.7);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border: 1px solid rgba(255, 255, 255, 0.08);
     }
     .glass-panel-light {
@@ -61,8 +61,22 @@
       -webkit-backdrop-filter: blur(16px);
       border: 1px solid rgba(0, 0, 0, 0.08);
     }
-    .pulse-glow {
-      box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+    .login-glow {
+      box-shadow: 0 20px 60px -15px rgba(16, 185, 129, 0.25), 0 0 40px -10px rgba(6, 182, 212, 0.15);
+    }
+    .bg-grid-pattern {
+      background-size: 32px 32px;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-7px); }
+      40%, 80% { transform: translateX(7px); }
+    }
+    .animate-shake {
+      animation: shake 0.4s ease-in-out;
     }
     [v-cloak] { opacity: 0; transition: opacity 0.2s; }
   </style>
@@ -80,67 +94,121 @@
       </transition-group>
     </div>
 
-    <!-- 1. 登录页面 (未登录时展示) -->
-    <div v-if="!isLoggedIn" class="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black">
-      <div class="absolute -top-40 -left-40 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
-      <div class="absolute -bottom-40 -right-40 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+    <!-- 1. 登录页面 (未登录时展示，全新现代科技美学设计) -->
+    <div v-if="!isLoggedIn" class="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-slate-950 bg-grid-pattern">
+      <!-- 极光背景微光团 -->
+      <div class="absolute -top-48 -left-48 w-[32rem] h-[32rem] bg-emerald-500/15 rounded-full blur-[120px] pointer-events-none"></div>
+      <div class="absolute -bottom-48 -right-48 w-[32rem] h-[32rem] bg-cyan-500/15 rounded-full blur-[120px] pointer-events-none"></div>
+      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-purple-500/5 rounded-full blur-[100px] pointer-events-none"></div>
 
-      <div class="w-full max-w-md glass-panel p-8 rounded-3xl shadow-2xl relative z-10 border border-slate-800">
-        <div class="flex items-center gap-3 mb-8 justify-center">
-          <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/25">
-            <svg class="w-7 h-7 text-slate-950" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+      <!-- 登录主卡片 -->
+      <div :class="{'animate-shake': loginShake}" class="w-full max-w-md glass-panel p-8 md:p-9 rounded-[2rem] login-glow relative z-10 border border-slate-700/60 shadow-2xl transition duration-300">
+        <!-- 品牌徽标 -->
+        <div class="flex flex-col items-center mb-8">
+          <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-400 p-[1.5px] shadow-lg shadow-emerald-500/25 mb-4 group cursor-pointer">
+            <div class="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center transition group-hover:bg-slate-900">
+              <svg class="w-7 h-7 text-emerald-400 group-hover:scale-110 transition duration-300" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
           </div>
-          <div>
-            <h1 class="text-2xl font-black tracking-wider bg-gradient-to-r from-white via-slate-200 to-emerald-400 bg-clip-text text-transparent">Work-V</h1>
-            <p class="text-xs text-slate-400">Komari 风格 · 节点与订阅控制台</p>
+          <div class="text-center">
+            <div class="flex items-center justify-center gap-2">
+              <h1 class="text-2xl font-black tracking-wider text-white">Work-V</h1>
+              <span class="text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">PRO</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">分布式网络中枢 · 节点与订阅控制台</p>
           </div>
         </div>
 
-        <form @submit.prevent="handleLogin" class="space-y-5">
+        <!-- 登录表单 -->
+        <form @submit.prevent="handleLogin" class="space-y-4">
+          <!-- 账号输入 -->
           <div>
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">管理员账号</label>
-            <input v-model="loginForm.username" type="text" required placeholder="admin" class="w-full px-4 py-3 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition text-sm">
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider">管理员账号</label>
+              <button type="button" @click="fillDefaultAdmin" class="text-[11px] text-emerald-400 hover:text-emerald-300 transition hover:underline select-none">填入默认: admin</button>
+            </div>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+              <input v-model="loginForm.username" type="text" required placeholder="请输入管理员用户名" class="w-full pl-10 pr-4 py-3 rounded-xl bg-slate-900/90 border border-slate-700/80 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition text-sm">
+            </div>
           </div>
 
+          <!-- 密码输入 -->
           <div>
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">安全密码</label>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">安全密码</label>
             <div class="relative">
-              <input v-model="loginForm.password" :type="showLoginPassword ? 'text' : 'password'" required placeholder="••••••••" class="w-full px-4 py-3 pr-11 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition text-sm">
-              <button type="button" @click="showLoginPassword = !showLoginPassword" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition p-1 text-sm select-none">
-                <span v-if="showLoginPassword">👁️</span>
-                <span v-else>🔒</span>
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <input v-model="loginForm.password" :type="showLoginPassword ? 'text' : 'password'" required placeholder="请输入密码" class="w-full pl-10 pr-11 py-3 rounded-xl bg-slate-900/90 border border-slate-700/80 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition text-sm">
+              <button type="button" @click="showLoginPassword = !showLoginPassword" class="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition p-1 select-none" :title="showLoginPassword ? '隐藏密码' : '显示密码'">
+                <svg v-if="showLoginPassword" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                </svg>
               </button>
             </div>
           </div>
 
-          <div class="flex items-center justify-between text-xs text-slate-400">
+          <!-- 选项条 -->
+          <div class="flex items-center justify-between text-xs text-slate-400 pt-1">
             <label class="flex items-center gap-2 cursor-pointer select-none hover:text-slate-300">
-              <input type="checkbox" v-model="loginForm.remember_me" class="rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0">
-              <span>保持登录状态 (30天)</span>
+              <input type="checkbox" v-model="loginForm.remember_me" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0 cursor-pointer">
+              <span>记住账号并保持登录</span>
             </label>
-            <span class="text-emerald-400/90 font-medium">🛡️ 安全入口已授信</span>
+            <span class="text-emerald-400 font-medium flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              安全入口已授信
+            </span>
           </div>
 
-          <div v-if="lockRemaining > 0" class="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs flex items-center gap-2">
-            <span>⚠️ 尝试失败次数超限，安全锁定保护中：{{ lockRemaining }} 秒</span>
+          <!-- 锁定保护倒计时提示 -->
+          <div v-if="lockRemaining > 0" class="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-xs flex items-center gap-2.5">
+            <svg class="w-5 h-5 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div>
+              <p class="font-bold">尝试失败次数过多，安全锁定中</p>
+              <p class="text-[11px] text-rose-400/80 mt-0.5">请在 <strong class="font-mono text-white text-xs">{{ lockRemaining }}</strong> 秒后重新尝试登录</p>
+            </div>
           </div>
 
-          <button :disabled="loginLoading || lockRemaining > 0" type="submit" class="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-[0.99] text-slate-950 font-bold rounded-xl shadow-lg shadow-emerald-500/20 transition duration-150 flex items-center justify-center gap-2 disabled:opacity-50">
-            <span v-if="!loginLoading">安全登录</span>
+          <!-- 登录按钮 -->
+          <button :disabled="loginLoading || lockRemaining > 0" type="submit" class="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 active:scale-[0.99] text-slate-950 font-extrabold rounded-xl shadow-lg shadow-emerald-500/25 transition duration-150 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+            <span v-if="!loginLoading" class="flex items-center gap-2">
+              <span>进入控制台</span>
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+              </svg>
+            </span>
             <span v-else class="flex items-center gap-2">
               <svg class="animate-spin h-5 w-5 text-slate-950" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
               </svg>
-              正在鉴权...
+              正在安全鉴权...
             </span>
           </button>
         </form>
 
-        <div class="mt-6 pt-6 border-t border-slate-800 text-center">
-          <p class="text-xs text-slate-500">内置 Bcrypt 防爆破限流 · 多协议自适应引擎</p>
+        <!-- 底部技术特性徽章 -->
+        <div class="mt-7 pt-5 border-t border-slate-800/80 flex items-center justify-center gap-3 text-[11px] text-slate-400">
+          <span class="flex items-center gap-1">⚡ 6大核心协议</span>
+          <span>·</span>
+          <span class="flex items-center gap-1">🛡️ Bcrypt防爆破</span>
+          <span>·</span>
+          <span class="flex items-center gap-1">🔒 节点长连自愈</span>
         </div>
       </div>
     </div>
@@ -188,6 +256,9 @@
           </button>
           <button @click="showSafeModal = true" class="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition">
             <span>🛡️ 安全路径: {{ safeEntrance.safe_path || '已关闭' }}</span>
+          </button>
+          <button @click="openSettingsModal()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition">
+            <span>⚙️ 系统设置</span>
           </button>
           <button @click="fetchData" title="刷新数据" class="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition">
             <svg class="w-4 h-4" :class="{'animate-spin': isRefreshing}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
@@ -281,10 +352,15 @@
                     </h3>
                     <p class="text-xs text-slate-400 font-mono mt-0.5">{{ node.address }}</p>
                   </div>
-                  <span :class="node.status === 'online' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border-rose-500/30'" class="text-xs px-2.5 py-1 rounded-full border font-semibold flex items-center gap-1.5">
-                    <span :class="node.status === 'online' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'" class="w-1.5 h-1.5 rounded-full"></span>
-                    {{ node.status === 'online' ? '在线' : '离线' }}
-                  </span>
+                  <div class="flex items-center gap-2">
+                    <button @click="pingNode(node)" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono transition" title="TCP 延迟探测">
+                      <span>📶 {{ nodeLatency[node.id] !== undefined ? nodeLatency[node.id] + 'ms' : 'Ping' }}</span>
+                    </button>
+                    <span :class="node.status === 'online' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border-rose-500/30'" class="text-xs px-2.5 py-1 rounded-full border font-semibold flex items-center gap-1.5">
+                      <span :class="node.status === 'online' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'" class="w-1.5 h-1.5 rounded-full"></span>
+                      {{ node.status === 'online' ? '在线' : '离线' }}
+                    </span>
+                  </div>
                 </div>
 
                 <!-- 性能监控指标 (CPU / 内存 / 实时网速) -->
@@ -332,20 +408,27 @@
               </div>
 
               <!-- 节点操作按钮条 -->
-              <div class="mt-5 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                <div class="flex items-center gap-2">
-                  <button @click="quickCopyCommand(node)" class="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 border border-emerald-500/20 transition active:scale-95">
-                    <span>⚡ 复制纳管命令</span>
+              <div class="mt-5 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs flex-wrap gap-2">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <button @click="quickCopyCommand(node)" class="px-2 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 border border-emerald-500/20 transition active:scale-95">
+                    <span>⚡ 命令</span>
                   </button>
-                  <button @click="openShareModal(node)" class="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 border border-cyan-500/20 transition active:scale-95">
-                    <span>📱 协议分享 与 二维码</span>
+                  <button @click="openShareModal(node)" class="px-2 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 border border-cyan-500/20 transition active:scale-95">
+                    <span>📱 链接</span>
                   </button>
-                  <button @click="openInstallModal(node)" class="text-slate-400 hover:text-white font-medium flex items-center gap-1 transition">
-                    <span>模式</span>
+                  <button @click="openInboundsModal(node)" class="px-2 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 font-semibold flex items-center gap-1 border border-purple-500/20 transition active:scale-95" title="配置协议入站与端口">
+                    <span>⚙️ 协议</span>
+                  </button>
+                  <button @click="openNodeLogsModal(node)" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold flex items-center gap-1 border border-slate-700 transition" title="查看内核实时日志">
+                    <span>📜 日志</span>
+                  </button>
+                  <button @click="openEditNodeModal(node)" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold flex items-center gap-1 border border-slate-700 transition" title="编辑节点名称、地址与倍率">
+                    <span>✏️ 编辑</span>
                   </button>
                 </div>
-                <div class="flex items-center gap-2">
-                  <button @click="syncNode(node.id)" title="推送最新配置" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition">同步</button>
+                <div class="flex items-center gap-1.5">
+                  <button @click="restartNodeSingbox(node)" title="重启节点 sing-box 内核" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 transition">重启</button>
+                  <button @click="syncNode(node.id)" title="推送最新配置" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition">同步</button>
                   <button @click="deleteNode(node.id)" title="删除节点" class="px-2 py-1 rounded-lg text-rose-400 hover:bg-rose-500/10 transition">删除</button>
                 </div>
               </div>
@@ -361,21 +444,36 @@
 
         <!-- TAB 2: 用户与订阅管理 -->
         <div v-show="currentTab === 'users'" class="space-y-4">
-          <div class="flex items-center justify-between">
-            <div>
-              <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                <span>用户配额与多端订阅</span>
-                <span class="text-xs font-normal text-slate-400">支持 Clash / Sing-box / 小火箭自适应</span>
-              </h2>
+          <!-- 搜索、状态过滤与批量操作工具栏 -->
+          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
+            <div class="flex items-center gap-3 flex-1 flex-wrap">
+              <div class="relative flex-1 min-w-[200px] max-w-xs">
+                <input v-model="userSearchQuery" placeholder="搜索用户名或 UUID..." class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
+              </div>
+              <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+                <button @click="userStatusFilter = 'all'" :class="userStatusFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-lg transition">全部 ({{ users.length }})</button>
+                <button @click="userStatusFilter = 'active'" :class="userStatusFilter === 'active' ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-lg transition">正常</button>
+                <button @click="userStatusFilter = 'suspended'" :class="userStatusFilter === 'suspended' ? 'bg-rose-500/20 text-rose-300' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-lg transition">熔断</button>
+                <button @click="userStatusFilter = 'expired'" :class="userStatusFilter === 'expired' ? 'bg-amber-500/20 text-amber-300' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-lg transition">过期</button>
+              </div>
             </div>
-            <button @click="showAddUserModal = true" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 transition">
-              <span>+ 创建用户</span>
-            </button>
+
+            <div class="flex items-center gap-2 flex-wrap">
+              <button @click="showBatchUserModal = true" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold text-xs border border-slate-700 transition">
+                <span>⚡ 批量生成用户</span>
+              </button>
+              <button @click="batchResetTraffic" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-300 hover:text-rose-200 font-semibold text-xs border border-slate-700 transition" title="清零所有用户的已用流量">
+                <span>🔄 全员重置流量</span>
+              </button>
+              <button @click="showAddUserModal = true" class="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1 shadow-lg shadow-emerald-500/20 transition">
+                <span>+ 创建用户</span>
+              </button>
+            </div>
           </div>
 
           <!-- 用户列表卡片 -->
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            <div v-for="user in users" :key="user.id" class="glass-panel rounded-2xl p-5 border border-slate-800 relative group flex flex-col justify-between">
+            <div v-for="user in filteredUsers" :key="user.id" class="glass-panel rounded-2xl p-5 border border-slate-800 relative group flex flex-col justify-between">
               <div>
                 <div class="flex items-start justify-between mb-3">
                   <div>
@@ -406,13 +504,21 @@
               </div>
 
               <!-- 操作与一键复制订阅条 -->
-              <div class="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
-                <button @click="openSubModal(user)" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 text-emerald-300 hover:text-white font-bold transition flex items-center gap-1.5">
-                  <span>🔗 提取订阅</span>
-                </button>
-                <div class="flex items-center gap-2">
-                  <button @click="resetUserTraffic(user.id)" title="重置已用流量" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition">重置</button>
-                  <button @click="deleteUser(user.id)" title="删除用户" class="px-2 py-1 rounded-lg text-rose-400 hover:bg-rose-500/10 transition">删除</button>
+              <div class="pt-3 border-t border-slate-800 flex items-center justify-between text-xs flex-wrap gap-2">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <button @click="openSubModal(user)" class="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 text-emerald-300 hover:text-white font-bold transition flex items-center gap-1">
+                    <span>🔗 提取订阅</span>
+                  </button>
+                  <button @click="openEditUserModal(user)" class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700 transition" title="修改配额/有效期/状态">
+                    <span>✏️ 编辑</span>
+                  </button>
+                  <button @click="regenerateUserCredentials(user)" class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 font-semibold border border-slate-700 transition" title="重新生成 UUID 与订阅 Token (防泄露)">
+                    <span>🔑 重置凭证</span>
+                  </button>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <button @click="resetUserTraffic(user.id)" title="重置已用流量" class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition">清零</button>
+                  <button @click="deleteUser(user.id)" title="删除用户" class="px-2 py-1.5 rounded-lg text-rose-400 hover:bg-rose-500/10 transition">删除</button>
                 </div>
               </div>
             </div>
@@ -914,10 +1020,249 @@
       </div>
     </div>
 
+    <!-- 弹窗: 节点协议入站与端口深度配置 -->
+    <div v-if="inboundsModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-2xl w-full p-6 rounded-3xl border border-slate-800 shadow-2xl max-h-[90vh] flex flex-col">
+        <div class="flex items-start justify-between pb-4 border-b border-slate-800">
+          <div>
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>⚙️ 节点协议入站与端口配置</span>
+              <span class="text-xs px-2.5 py-0.5 rounded-full bg-purple-500/10 text-purple-300 font-mono">{{ inboundsModal.node?.name }}</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">按需开启/关闭协议，自由修改监听端口与伪装域名，保存后自动推送到节点热生效</p>
+          </div>
+          <button @click="inboundsModal.show = false" class="text-slate-400 hover:text-white text-lg">✕</button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto py-4 space-y-3">
+          <div v-for="(inb, idx) in inboundsModal.list" :key="inb.tag || idx" class="p-4 bg-slate-900/80 rounded-2xl border border-slate-800 space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <input type="checkbox" v-model="inb.enabled" :id="'inb_' + idx" class="w-4 h-4 rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0 cursor-pointer">
+                <label :for="'inb_' + idx" class="text-sm font-bold text-white cursor-pointer select-none uppercase">
+                  {{ inb.type }} ({{ inb.tag }})
+                </label>
+              </div>
+              <span :class="inb.enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'" class="text-xs px-2.5 py-0.5 rounded-full border font-semibold">
+                {{ inb.enabled ? '启用中' : '已停用' }}
+              </span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label class="block text-slate-400 font-medium mb-1">监听端口</label>
+                <input v-model.number="inb.listen_port" type="number" min="1" max="65535" class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-purple-500">
+              </div>
+              <div v-if="inb.options && inb.options.server_name !== undefined">
+                <label class="block text-slate-400 font-medium mb-1">伪装域名 (SNI)</label>
+                <input v-model="inb.options.server_name" class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-purple-500">
+              </div>
+              <div v-if="inb.options && inb.options.path !== undefined">
+                <label class="block text-slate-400 font-medium mb-1">WebSocket 路径</label>
+                <input v-model="inb.options.path" class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-purple-500">
+              </div>
+              <div v-if="inb.options && inb.options.service_name !== undefined">
+                <label class="block text-slate-400 font-medium mb-1">gRPC 业务名称</label>
+                <input v-model="inb.options.service_name" class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-purple-500">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-800 flex justify-end gap-2">
+          <button @click="inboundsModal.show = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-700">取消</button>
+          <button @click="saveInbounds" class="px-5 py-2 rounded-xl bg-purple-500 hover:bg-purple-600 text-white font-bold text-xs flex items-center gap-1 shadow-lg shadow-purple-500/20 active:scale-95 transition">
+            <span>💾 保存并推送至节点</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗: 编辑节点 -->
+    <div v-if="editNodeModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-md w-full p-6 rounded-3xl border border-slate-800 shadow-2xl">
+        <div class="flex items-start justify-between mb-4">
+          <h3 class="text-lg font-bold text-white">✏️ 编辑服务节点</h3>
+          <button @click="editNodeModal.show = false" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+        <form @submit.prevent="saveNodeEdit" class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">节点显示名称</label>
+            <input v-model="editNodeModal.form.name" required class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">客户端直连地址 (IP 或域名)</label>
+            <input v-model="editNodeModal.form.address" placeholder="自动探测" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm font-mono focus:outline-none focus:border-emerald-500">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">流量倍率 (Rate)</label>
+            <input v-model.number="editNodeModal.form.rate" type="number" step="0.1" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm font-mono focus:outline-none focus:border-emerald-500">
+          </div>
+          <div class="pt-2 flex justify-end gap-2">
+            <button type="button" @click="editNodeModal.show = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold">取消</button>
+            <button type="submit" class="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold">保存修改</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 弹窗: 节点实时日志 -->
+    <div v-if="nodeLogsModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-3xl w-full p-6 rounded-3xl border border-slate-800 shadow-2xl max-h-[85vh] flex flex-col">
+        <div class="flex items-start justify-between pb-3 border-b border-slate-800">
+          <div>
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>📜 节点内核实时运行日志</span>
+              <span class="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-emerald-400 font-mono">{{ nodeLogsModal.node?.name }}</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">从受控节点反向长连通道实时捕获 sing-box 输出</p>
+          </div>
+          <button @click="nodeLogsModal.show = false" class="text-slate-400 hover:text-white text-lg">✕</button>
+        </div>
+        <div class="flex-1 overflow-y-auto py-3">
+          <pre class="bg-slate-950 p-4 rounded-2xl border border-slate-800 font-mono text-[11px] text-emerald-400 whitespace-pre-wrap select-all leading-relaxed max-h-[55vh] overflow-y-auto">{{ nodeLogsModal.logs.length ? nodeLogsModal.logs.join('\n') : (nodeLogsModal.loading ? '正在从节点拉取实时日志...' : '暂无日志输出') }}</pre>
+        </div>
+        <div class="pt-3 border-t border-slate-800 flex justify-between items-center">
+          <button @click="fetchNodeLogs(nodeLogsModal.node)" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1">
+            <span>🔄 刷新日志</span>
+          </button>
+          <div class="flex gap-2">
+            <button @click="copyText(nodeLogsModal.logs.join('\n'))" class="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs">📋 复制全部日志</button>
+            <button @click="nodeLogsModal.show = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs">关闭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗: 编辑用户 -->
+    <div v-if="editUserModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-md w-full p-6 rounded-3xl border border-slate-800 shadow-2xl">
+        <div class="flex items-start justify-between mb-4">
+          <div>
+            <h3 class="text-lg font-bold text-white">✏️ 编辑订阅用户</h3>
+            <p class="text-xs text-slate-400">用户: {{ editUserModal.user?.username }}</p>
+          </div>
+          <button @click="editUserModal.show = false" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+
+        <form @submit.prevent="saveUserEdit" class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">用户名</label>
+            <input v-model="editUserModal.form.username" required class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500">
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">流量上限 (GB，填 0 为不限制)</label>
+            <input v-model.number="editUserModal.form.traffic_limit_gb" type="number" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono">
+            <div class="flex gap-1.5 mt-2">
+              <button type="button" @click="editUserModal.form.traffic_limit_gb += 50" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono">+50G</button>
+              <button type="button" @click="editUserModal.form.traffic_limit_gb += 100" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono">+100G</button>
+              <button type="button" @click="editUserModal.form.traffic_limit_gb += 500" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono">+500G</button>
+              <button type="button" @click="editUserModal.form.traffic_limit_gb = 0" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-400 font-mono">不限量</button>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">账号状态</label>
+            <select v-model="editUserModal.form.status" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500">
+              <option value="active">🟢 正常活跃 (active)</option>
+              <option value="suspended">🔴 流量熔断 (suspended)</option>
+              <option value="expired">🟡 账号过期 (expired)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">快捷延长时间</label>
+            <div class="flex gap-1.5">
+              <button type="button" @click="extendUserDays(30)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono">+30天</button>
+              <button type="button" @click="extendUserDays(90)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono">+90天</button>
+              <button type="button" @click="extendUserDays(365)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono">+365天</button>
+              <button type="button" @click="editUserModal.form.expire_at = 0" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 font-mono">永久有效</button>
+            </div>
+          </div>
+
+          <div class="pt-3 flex justify-end gap-2 border-t border-slate-800">
+            <button type="button" @click="editUserModal.show = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold">取消</button>
+            <button type="submit" class="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold">保存并推送到全网</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 弹窗: 批量添加用户 -->
+    <div v-if="showBatchUserModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-md w-full p-6 rounded-3xl border border-slate-800 shadow-2xl">
+        <div class="flex items-start justify-between mb-4">
+          <div>
+            <h3 class="text-lg font-bold text-white">⚡ 批量生成订阅用户</h3>
+            <p class="text-xs text-slate-400">一键生成多位专属订阅用户并分配配额与天数</p>
+          </div>
+          <button @click="showBatchUserModal = false" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+        <form @submit.prevent="submitBatchUsers" class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">用户名统一前缀</label>
+            <input v-model="batchForm.prefix" required placeholder="如: vip / user" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">批量创建数量 (1 ~ 50)</label>
+            <input v-model.number="batchForm.count" type="number" min="1" max="50" required class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">流量上限 (GB，填 0 为不限制)</label>
+            <input v-model.number="batchForm.traffic_limit_gb" type="number" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">有效天数 (填 0 为永久有效)</label>
+            <input v-model.number="batchForm.expire_days" type="number" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono">
+          </div>
+          <div class="pt-3 flex justify-end gap-2 border-t border-slate-800">
+            <button type="button" @click="showBatchUserModal = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold">取消</button>
+            <button type="submit" class="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold">立即批量生成</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 弹窗: 全局系统设置 -->
+    <div v-if="showSettingsModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-panel max-w-lg w-full p-6 rounded-3xl border border-slate-800 shadow-2xl">
+        <div class="flex items-start justify-between mb-4 pb-3 border-b border-slate-800">
+          <div>
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>⚙️ 全局系统设置与数据库备份</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-1">配置主控外网访问域名，并可一键下载 SQLite 全库备份</p>
+          </div>
+          <button @click="showSettingsModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
+        </div>
+        <div class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">主控外网访问域名 (可选)</label>
+            <input v-model="settingsForm.master_domain" placeholder="如: vpn.example.com (留空则使用客户端访问 IP)" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-emerald-500">
+            <p class="text-[11px] text-slate-500 mt-1">配置后，所有生成的一键纳管脚本和客户端自适应订阅链接均会自动使用此域名。</p>
+          </div>
+          <div class="p-3.5 bg-slate-900 rounded-2xl border border-slate-800 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-slate-300 font-bold">💾 SQLite 全库一键备份</span>
+              <a href="/api/v1/admin/system/backup" target="_blank" class="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs flex items-center gap-1">
+                <span>📥 下载数据库备份</span>
+              </a>
+            </div>
+            <p class="text-[11px] text-slate-400">随时可下载完整的 work-v.db 数据库文件，即使重装服务器也可秒级恢复所有节点和用户。</p>
+          </div>
+          <div class="pt-3 border-t border-slate-800 flex justify-end gap-2">
+            <button @click="showSettingsModal = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold">取消</button>
+            <button @click="saveSystemSettings" class="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold">保存全局设置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <script>
-    const { createApp, ref, reactive, onMounted, onUnmounted } = Vue;
+    const { createApp, ref, reactive, computed, onMounted, onUnmounted } = Vue;
 
     const app = createApp({
       setup() {
@@ -937,11 +1282,32 @@
           toasts.value = toasts.value.filter(t => t.id !== id);
         };
 
-        // 登录表单
+        // 登录表单 (支持记忆账号、平滑倒计时、错误回弹)
         const showLoginPassword = ref(false);
-        const loginForm = reactive({ username: '', password: '', remember_me: true });
+        const savedUsername = localStorage.getItem('workv_saved_username') || 'admin';
+        const loginForm = reactive({ username: savedUsername, password: '', remember_me: true });
         const loginLoading = ref(false);
         const lockRemaining = ref(0);
+        const loginShake = ref(false);
+        let lockTimer = null;
+
+        const fillDefaultAdmin = () => {
+          loginForm.username = 'admin';
+          addToast('已填入默认管理员账号: admin');
+        };
+
+        const startLockCountdown = (seconds) => {
+          lockRemaining.value = seconds;
+          if (lockTimer) clearInterval(lockTimer);
+          lockTimer = setInterval(() => {
+            if (lockRemaining.value > 0) {
+              lockRemaining.value--;
+            } else {
+              clearInterval(lockTimer);
+              lockTimer = null;
+            }
+          }, 1000);
+        };
 
         // 状态数据
         const dashboard = reactive({
@@ -955,6 +1321,25 @@
         });
         const nodes = ref([]);
         const users = ref([]);
+        const nodeLatency = reactive({});
+
+        // 用户搜索与过滤
+        const userSearchQuery = ref('');
+        const userStatusFilter = ref('all');
+        const filteredUsers = computed(() => {
+          let list = users.value || [];
+          if (userStatusFilter.value !== 'all') {
+            list = list.filter(u => u.status === userStatusFilter.value);
+          }
+          const q = userSearchQuery.value.trim().toLowerCase();
+          if (q) {
+            list = list.filter(u =>
+              (u.username && u.username.toLowerCase().includes(q)) ||
+              (u.uuid && u.uuid.toLowerCase().includes(q))
+            );
+          }
+          return list;
+        });
 
         // 模态框状态
         const showAddNodeModal = ref(false);
@@ -962,10 +1347,20 @@
         const commandTab = ref('global');
         const customNatPort = ref(10086);
         const selectedNodeForInstall = ref(null);
+        const inboundsModal = reactive({ show: false, node: null, list: [] });
+        const editNodeModal = reactive({ show: false, node: null, form: { name: '', address: '', rate: 1.0 } });
+        const nodeLogsModal = reactive({ show: false, node: null, logs: [], loading: false });
+
         const showAddUserModal = ref(false);
+        const showBatchUserModal = ref(false);
+        const batchForm = reactive({ prefix: 'vip', count: 5, traffic_limit_gb: 100, expire_days: 30 });
+        const editUserModal = reactive({ show: false, user: null, form: { username: '', traffic_limit_gb: 100, expire_at: 0, status: 'active' } });
         const selectedUserForSub = ref(null);
+
         const showPassModal = ref(false);
         const showSafeModal = ref(false);
+        const showSettingsModal = ref(false);
+        const settingsForm = reactive({ master_domain: '' });
         const qrModal = reactive({ show: false, title: '', url: '' });
         const openQr = (url, title) => {
           qrModal.url = url;
@@ -1018,10 +1413,15 @@
             });
             const data = await res.json();
             if (!res.ok) {
+              loginShake.value = true;
+              setTimeout(() => { loginShake.value = false; }, 500);
               if (res.status === 429) {
-                lockRemaining.value = 300;
+                startLockCountdown(300);
               }
-              throw new Error(data.error || '登录失败');
+              throw new Error(data.error || '登录失败，请检查账号密码');
+            }
+            if (loginForm.remember_me) {
+              localStorage.setItem('workv_saved_username', loginForm.username);
             }
             token.value = data.token;
             localStorage.setItem('workv_token', data.token);
@@ -1359,6 +1759,205 @@
           fetchDiag();
         };
 
+        // 节点延迟探测 (Ping)
+        const pingNode = async (node) => {
+          try {
+            nodeLatency[node.id] = '...';
+            const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/ping`, { method: 'POST' });
+            nodeLatency[node.id] = res.latency_ms;
+            addToast(`【${node.name}】延迟探测: ${res.latency_ms}ms`);
+          } catch (err) {
+            nodeLatency[node.id] = 'err';
+            addToast(`Ping 探测失败: ${err.message}`, 'error');
+          }
+        };
+
+        // 协议入站管理
+        const openInboundsModal = async (node) => {
+          inboundsModal.node = node;
+          inboundsModal.list = [];
+          inboundsModal.show = true;
+          try {
+            const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/inbounds`);
+            inboundsModal.list = res.inbounds || [];
+          } catch (err) {
+            addToast(`加载入站协议失败: ${err.message}`, 'error');
+          }
+        };
+
+        const saveInbounds = async () => {
+          if (!inboundsModal.node) return;
+          try {
+            await apiFetch(`/api/v1/admin/nodes/${inboundsModal.node.id}/inbounds`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ inbounds: inboundsModal.list })
+            });
+            inboundsModal.show = false;
+            addToast('协议配置已保存并推送至节点！');
+          } catch (err) {
+            addToast(`保存协议失败: ${err.message}`, 'error');
+          }
+        };
+
+        // 编辑节点
+        const openEditNodeModal = (node) => {
+          editNodeModal.node = node;
+          editNodeModal.form.name = node.name;
+          editNodeModal.form.address = node.address || '';
+          editNodeModal.form.rate = node.rate || 1.0;
+          editNodeModal.show = true;
+        };
+
+        const saveNodeEdit = async () => {
+          if (!editNodeModal.node) return;
+          try {
+            await apiFetch(`/api/v1/admin/nodes/${editNodeModal.node.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(editNodeModal.form)
+            });
+            editNodeModal.show = false;
+            addToast('节点信息修改成功');
+            fetchData();
+          } catch (err) {
+            addToast(err.message, 'error');
+          }
+        };
+
+        // 节点实时日志与重启
+        const openNodeLogsModal = (node) => {
+          nodeLogsModal.node = node;
+          nodeLogsModal.logs = [];
+          nodeLogsModal.show = true;
+          fetchNodeLogs(node);
+        };
+
+        const fetchNodeLogs = async (node) => {
+          if (!node) return;
+          nodeLogsModal.loading = true;
+          try {
+            const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/logs`);
+            nodeLogsModal.logs = res.logs || [];
+          } catch (err) {
+            nodeLogsModal.logs = ['[错误] 拉取日志失败: ' + err.message];
+          } finally {
+            nodeLogsModal.loading = false;
+          }
+        };
+
+        const restartNodeSingbox = async (node) => {
+          if (!confirm(`确认远程重启节点【${node.name}】的 sing-box 内核吗？`)) return;
+          try {
+            const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/restart`, { method: 'POST' });
+            addToast(res.message || '内核重启指令已下发！');
+          } catch (err) {
+            addToast(`重启失败: ${err.message}`, 'error');
+          }
+        };
+
+        // 用户管理扩展 (编辑用户、快捷续期、重置凭证、批量创建、全员重置)
+        const openEditUserModal = (user) => {
+          editUserModal.user = user;
+          editUserModal.form.username = user.username;
+          editUserModal.form.traffic_limit_gb = user.traffic_limit ? Math.round(user.traffic_limit / (1024 * 1024 * 1024)) : 0;
+          editUserModal.form.expire_at = user.expire_at || 0;
+          editUserModal.form.status = user.status || 'active';
+          editUserModal.show = true;
+        };
+
+        const extendUserDays = (days) => {
+          const now = Math.floor(Date.now() / 1000);
+          const base = Math.max(now, editUserModal.form.expire_at || 0);
+          editUserModal.form.expire_at = base + days * 86400;
+        };
+
+        const saveUserEdit = async () => {
+          if (!editUserModal.user) return;
+          try {
+            await apiFetch(`/api/v1/admin/users/${editUserModal.user.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                username: editUserModal.form.username,
+                traffic_limit_gb: editUserModal.form.traffic_limit_gb,
+                expire_at: editUserModal.form.expire_at,
+                status: editUserModal.form.status
+              })
+            });
+            editUserModal.show = false;
+            addToast('用户信息更新成功，并已同步全网！');
+            fetchData();
+          } catch (err) {
+            addToast(err.message, 'error');
+          }
+        };
+
+        const regenerateUserCredentials = async (user) => {
+          if (!confirm(`确认重新生成【${user.username}】的 UUID 与订阅 Token 吗？\n警告：原订阅链接和所有节点在线连接将立即失效！`)) return;
+          try {
+            const res = await apiFetch(`/api/v1/admin/users/${user.id}/regenerate`, { method: 'POST' });
+            addToast('已成功重置凭证与订阅 Token！');
+            fetchData();
+            if (selectedUserForSub.value && selectedUserForSub.value.id === user.id) {
+              selectedUserForSub.value = res;
+            }
+          } catch (err) {
+            addToast(err.message, 'error');
+          }
+        };
+
+        const submitBatchUsers = async () => {
+          try {
+            const res = await apiFetch('/api/v1/admin/users/batch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(batchForm)
+            });
+            showBatchUserModal.value = false;
+            addToast(`成功批量生成 ${res.count || batchForm.count} 位订阅用户！`);
+            fetchData();
+          } catch (err) {
+            addToast(err.message, 'error');
+          }
+        };
+
+        const batchResetTraffic = async () => {
+          if (!confirm('⚠️ 危险操作：确认将全网所有用户的已用流量全部清零重置吗？')) return;
+          try {
+            const res = await apiFetch('/api/v1/admin/users/batch-reset-traffic', { method: 'POST' });
+            addToast(res.message || '全网用户流量已成功清零！');
+            fetchData();
+          } catch (err) {
+            addToast(err.message, 'error');
+          }
+        };
+
+        // 全局系统设置
+        const openSettingsModal = async () => {
+          showSettingsModal.value = true;
+          try {
+            const res = await apiFetch('/api/v1/admin/system/settings');
+            settingsForm.master_domain = res.master_domain || '';
+          } catch (err) {
+            console.error('加载系统设置失败:', err);
+          }
+        };
+
+        const saveSystemSettings = async () => {
+          try {
+            await apiFetch('/api/v1/admin/system/settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(settingsForm)
+            });
+            showSettingsModal.value = false;
+            addToast('全局系统设置已保存');
+          } catch (err) {
+            addToast(err.message, 'error');
+          }
+        };
+
         let poller = null;
         onMounted(() => {
           if (isLoggedIn.value) {
@@ -1371,14 +1970,15 @@
 
         onUnmounted(() => {
           if (poller) clearInterval(poller);
+          if (lockTimer) clearInterval(lockTimer);
         });
 
         return {
           isLoggedIn, currentTab, isRefreshing, toasts, addToast, removeToast,
-          showLoginPassword, loginForm, loginLoading, lockRemaining, handleLogin, logout,
+          showLoginPassword, loginForm, loginLoading, lockRemaining, loginShake, fillDefaultAdmin, handleLogin, logout,
           dashboard, nodes, users, fetchData,
           showAddNodeModal, showAdvancedNodeFields, nodeForm, createNode, syncNode, deleteNode,
-          selectedNodeForInstall, openInstallModal, getAdaptedInstallCommand, commandTab, customNatPort,
+          selectedNodeForInstall, openInstallModal, getAdaptedInstallCommand, commandTab, customNatPort, quickCopyCommand,
           showAddUserModal, userForm, createUser, resetUserTraffic, deleteUser,
           selectedUserForSub, openSubModal, getSubURL,
           qrModal, openQr,
@@ -1388,6 +1988,13 @@
           singboxInfo, showSingboxModal, openSingboxModal, fetchSingboxVersion, upgradeSingboxCore,
           portsList, showPortsModal, openPortsModal,
           diagData, showDiagModal, openDiagModal,
+          nodeLatency, pingNode, inboundsModal, openInboundsModal, saveInbounds,
+          editNodeModal, openEditNodeModal, saveNodeEdit,
+          nodeLogsModal, openNodeLogsModal, fetchNodeLogs, restartNodeSingbox,
+          userSearchQuery, userStatusFilter, filteredUsers,
+          showBatchUserModal, batchForm, submitBatchUsers, batchResetTraffic,
+          editUserModal, openEditUserModal, extendUserDays, saveUserEdit, regenerateUserCredentials,
+          showSettingsModal, settingsForm, openSettingsModal, saveSystemSettings,
           copyText, formatBytes, formatSpeed, formatDate,
           calculateUserTrafficPercent, getUserProgressColor, getUserStatusText, getUserStatusBadgeClass
         };

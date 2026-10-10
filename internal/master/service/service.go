@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"time"
 
 	"work-v/internal/common"
 	"work-v/internal/master/hub"
 	"work-v/internal/master/model"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/curve25519"
 	"gorm.io/gorm"
 )
@@ -117,6 +119,35 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
 				"insecure":    true,
+			},
+		},
+		{
+			Type:       "shadowsocks",
+			Tag:        "ss-in",
+			ListenPort: 8388,
+			Enabled:    false,
+			Options: map[string]any{
+				"method":   "2022-blake3-aes-128-gcm",
+				"password": "d29ya3YxMjM0NTY3ODkwMQ==",
+			},
+		},
+		{
+			Type:       "vless-ws",
+			Tag:        "vless-ws-in",
+			ListenPort: 2096,
+			Enabled:    false,
+			Options: map[string]any{
+				"server_name": "gateway.icloud.com",
+				"path":        "/ws",
+			},
+		},
+		{
+			Type:       "trojan",
+			Tag:        "trojan-in",
+			ListenPort: 8446,
+			Enabled:    false,
+			Options: map[string]any{
+				"server_name": "gateway.icloud.com",
 			},
 		},
 	}
@@ -251,6 +282,62 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 				Link:        link,
 				Description: "AnyTLS 轻量化 TLS 传输协议",
 			})
+
+		case "shadowsocks":
+			method, _ := in.Options["method"].(string)
+			if method == "" {
+				method = "2022-blake3-aes-128-gcm"
+			}
+			pwd, _ := in.Options["password"].(string)
+			if pwd == "" {
+				pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
+			}
+			userInfo := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", method, pwd)))
+			link := fmt.Sprintf("ss://%s@%s:%d#%s", userInfo, node.Address, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-Shadowsocks", node.Name)))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "shadowsocks",
+				Name:        fmt.Sprintf("%s (Shadowsocks)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: fmt.Sprintf("经典抗封锁协议 (%s)，兼容原版 SS 与小火箭", method),
+			})
+
+		case "vless-ws":
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = node.Address
+			}
+			wsPath, _ := in.Options["path"].(string)
+			if wsPath == "" {
+				wsPath = "/ws"
+			}
+			link := fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=tls&sni=%s&type=ws&path=%s&allowInsecure=1#%s",
+				userUUID, node.Address, in.ListenPort, serverName, url.QueryEscape(wsPath), url.QueryEscape(fmt.Sprintf("%s-VLESS-WS", node.Name)))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "vless-ws",
+				Name:        fmt.Sprintf("%s (VLESS WebSocket)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: "基于 WebSocket + TLS 的传输协议，兼容 CDN 节点代理与反代加速",
+			})
+
+		case "trojan":
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = node.Address
+			}
+			link := fmt.Sprintf("trojan://%s@%s:%d?security=tls&sni=%s&allowInsecure=1#%s",
+				userUUID, node.Address, in.ListenPort, serverName, url.QueryEscape(fmt.Sprintf("%s-Trojan", node.Name)))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "trojan",
+				Name:        fmt.Sprintf("%s (Trojan)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: "经典 Trojan 伪装协议，标准 TLS 流量特征",
+			})
 		}
 	}
 	return links
@@ -345,7 +432,7 @@ func RecordTraffic(nodeID uint, users []common.UserDeltaTraffic) {
 	}
 }
 
-// StartQuotaWatchdog 启动后台监控：定期检查到期用户并熔断
+// StartQuotaWatchdog 启动后台监控：定期检查到期用户熔断并同步离线节点
 func StartQuotaWatchdog() {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -359,6 +446,76 @@ func StartQuotaWatchdog() {
 				log.Printf("[Quota] 用户 %s 已过期，执行全网下线广播", u.Username)
 				hub.GlobalHub.BroadcastCutoffUser(u.UUID)
 			}
+
+			// 同步离线节点状态
+			hub.GlobalHub.SyncOfflineNodes()
 		}
 	}()
+}
+
+// BatchCreateUsers 批量生成订阅用户
+func BatchCreateUsers(prefix string, count int, trafficLimitGB int64, expireDays int64) ([]model.User, error) {
+	if prefix == "" {
+		prefix = "user"
+	}
+	if count <= 0 {
+		count = 1
+	}
+	if count > 50 {
+		count = 50
+	}
+
+	var expireAt int64 = 0
+	if expireDays > 0 {
+		expireAt = time.Now().AddDate(0, 0, int(expireDays)).Unix()
+	}
+
+	created := make([]model.User, 0, count)
+	for i := 1; i <= count; i++ {
+		uBytes := make([]byte, 4)
+		rand.Read(uBytes)
+		uname := fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(uBytes))
+
+		user := model.User{
+			Username:     uname,
+			UUID:         uuid.New().String(),
+			SubToken:     hex.EncodeToString(append(uBytes, uBytes...)),
+			TrafficLimit: trafficLimitGB * 1024 * 1024 * 1024,
+			UsedTraffic:  0,
+			ExpireAt:     expireAt,
+			Status:       "active",
+		}
+
+		if err := model.DB.Create(&user).Error; err != nil {
+			return nil, err
+		}
+		created = append(created, user)
+	}
+
+	// 触发全网节点更新配置
+	var nodes []model.Node
+	model.DB.Find(&nodes)
+	for _, n := range nodes {
+		go hub.GlobalHub.PushConfigToNode(n.ID)
+	}
+
+	return created, nil
+}
+
+// ResetAllUsersTraffic 一键重置全网用户的已用流量
+func ResetAllUsersTraffic() error {
+	if err := model.DB.Model(&model.User{}).Where("1 = 1").Updates(map[string]any{
+		"used_traffic": 0,
+		"status":       "active",
+	}).Error; err != nil {
+		return err
+	}
+
+	// 触发全网节点更新配置
+	var nodes []model.Node
+	model.DB.Find(&nodes)
+	for _, n := range nodes {
+		go hub.GlobalHub.PushConfigToNode(n.ID)
+	}
+	return nil
 }

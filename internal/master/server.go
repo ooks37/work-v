@@ -149,27 +149,38 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			admin.GET("/safe-entrance", api.HandleGetSafeEntrance)
 			admin.POST("/safe-entrance", api.HandleSetSafeEntrance)
 
-			// 节点管理
+			// 节点管理与远程运维
 			admin.GET("/nodes", api.HandleGetNodes)
 			admin.POST("/nodes", api.HandleCreateNode)
 			admin.PUT("/nodes/:id", api.HandleUpdateNode)
 			admin.DELETE("/nodes/:id", api.HandleDeleteNode)
 			admin.POST("/nodes/:id/sync", api.HandleSyncNode)
 			admin.GET("/nodes/:id/links", api.HandleGetNodeLinks)
+			admin.GET("/nodes/:id/inbounds", api.HandleGetNodeInbounds)
+			admin.PUT("/nodes/:id/inbounds", api.HandleUpdateNodeInbounds)
+			admin.POST("/nodes/:id/restart", api.HandleRestartNodeSingbox)
+			admin.GET("/nodes/:id/logs", api.HandleGetNodeLogs)
+			admin.POST("/nodes/:id/ping", api.HandlePingNode)
 
 			// sing-box 内核管理与在线升级 (借鉴 iwantrun 最佳实践)
 			admin.GET("/singbox/version", api.HandleGetSingboxVersion)
 			admin.POST("/singbox/upgrade", api.HandleUpgradeSingbox)
 
-			// 系统开放端口与综合诊断
+			// 系统开放端口、综合诊断与系统配置
 			admin.GET("/system/ports", api.HandleGetOpenPorts)
 			admin.GET("/system/diagnostic", api.HandleGetDiagnostic)
+			admin.GET("/system/settings", api.HandleGetSystemSettings)
+			admin.POST("/system/settings", api.HandleUpdateSystemSettings)
+			admin.GET("/system/backup", api.HandleBackupDB)
 
-			// 用户管理
+			// 用户管理与批量运维
 			admin.GET("/users", api.HandleGetUsers)
 			admin.POST("/users", api.HandleCreateUser)
+			admin.POST("/users/batch", api.HandleBatchCreateUsers)
+			admin.POST("/users/reset-all", api.HandleBatchResetTraffic)
 			admin.PUT("/users/:id", api.HandleUpdateUser)
 			admin.DELETE("/users/:id", api.HandleDeleteUser)
+			admin.POST("/users/:id/regenerate", api.HandleRegenerateUserCredentials)
 		}
 	}
 
@@ -221,6 +232,7 @@ func handleAgentInstallScript(c *gin.Context) {
 	candidates := []string{
 		"scripts/install.sh",
 		"/opt/work-v-master/scripts/install.sh",
+		"internal/master/install.sh",
 		"install.sh",
 	}
 	for _, p := range candidates {
