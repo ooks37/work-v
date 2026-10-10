@@ -148,6 +148,17 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 		c.Data(http.StatusOK, "image/png", png)
 	})
 
+	// 严格禁止开放注册（系统规则：禁止自主注册，所有账号均由管理员在控制台统一添加与分配）
+	rejectRegistration := func(c *gin.Context) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    403,
+			"error":   "Forbidden",
+			"message": "系统已全面关闭自主注册，所有账号均由管理员在控制台统一添加与分配",
+		})
+	}
+	r.Any("/register", rejectRegistration)
+	r.Any("/api/v1/register", rejectRegistration)
+
 	// 6. REST API 分组
 	v1 := r.Group("/api/v1")
 	{
@@ -155,6 +166,7 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 		auth := v1.Group("/auth")
 		{
 			auth.POST("/login", api.HandleLogin)
+			auth.Any("/register", rejectRegistration)
 		}
 
 		// 管理员受保护接口

@@ -115,11 +115,9 @@ func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.Inb
 	for _, p := range enabledProtocols {
 		protoMap[strings.ToLower(strings.TrimSpace(p))] = true
 	}
-	// 若未指定任何协议，默认仅启用高隐蔽协议 (VLESS-WS 与 VLESS-Reality)
+	// 若未指定任何协议，默认仅启用单个高隐蔽抗封协议 (VLESS-Reality 免证书·抗封)
 	if len(enabledProtocols) == 0 {
-		protoMap["vless-ws"] = true
 		protoMap["vless"] = true
-		protoMap["grpc-reality"] = true
 	}
 
 	inbounds := []common.InboundConfig{
@@ -661,12 +659,15 @@ func BatchCreateUsers(prefix string, count int, trafficLimitGB int64, expireDays
 
 // ResetAllUsersTraffic 一键重置全网用户的已用流量
 func ResetAllUsersTraffic() error {
-	if err := model.DB.Model(&model.User{}).Where("1 = 1").Updates(map[string]any{
-		"used_traffic": 0,
-		"status":       "active",
-	}).Error; err != nil {
+	// 重置全员已用流量
+	if err := model.DB.Model(&model.User{}).Where("1 = 1").Update("used_traffic", 0).Error; err != nil {
 		return err
 	}
+	// 仅恢复因流量超额被熔断 (suspended) 且尚未到期的账号，避免误激活已过期的账号
+	now := time.Now().Unix()
+	model.DB.Model(&model.User{}).
+		Where("status = ? AND (expire_at = 0 OR expire_at > ?)", "suspended", now).
+		Update("status", "active")
 
 	// 触发全网节点更新配置
 	var nodes []model.Node

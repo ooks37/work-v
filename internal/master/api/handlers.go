@@ -692,6 +692,14 @@ func HandleDeleteUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
 		return
 	}
+
+	// 触发全网节点更新配置 (确保已删除用户的凭据彻底从节点内核中移除)
+	var nodes []model.Node
+	model.DB.Find(&nodes)
+	for _, n := range nodes {
+		go hub.GlobalHub.PushConfigToNode(n.ID)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 

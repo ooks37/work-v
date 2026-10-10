@@ -210,10 +210,13 @@
           </button>
         </form>
 
-        <div class="mt-7 text-center">
+        <div class="mt-7 text-center space-y-2">
           <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#f2f2f7] border border-black/[0.06] text-[11px] text-[#86868b]">
             <span class="w-1.5 h-1.5 rounded-full" :class="safeEntrance.enabled ? 'bg-[#34c759]' : 'bg-[#86868b]'"></span>
             <span>安全入口防护：{{ safeEntrance.enabled ? '已启用' : '未开启' }}</span>
+          </div>
+          <div class="text-[11px] text-[#86868b] flex items-center justify-center gap-1">
+            <span>🔒 系统已关闭自主注册 · 仅限管理员在控制台统一添加与分配</span>
           </div>
         </div>
       </div>
@@ -518,12 +521,16 @@
         <div v-show="currentTab === 'users'" class="space-y-4">
           <!-- 顶部工具栏 -->
           <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div class="flex items-center gap-2 flex-1 max-w-sm">
+            <div class="flex items-center gap-2 flex-1 max-w-lg">
               <input 
                 v-model="userSearchQuery" 
                 placeholder="搜索用户名或 UUID..." 
                 class="w-full px-4 py-2 rounded-full bg-white border border-black/10 text-xs text-[#1d1d1f] placeholder-[#86868b] focus:outline-none focus:border-[#0071e3] shadow-sm"
               >
+              <span class="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#f2f2f7] border border-black/[0.06] text-[11px] text-[#86868b] whitespace-nowrap">
+                <span class="w-1.5 h-1.5 rounded-full bg-[#0071e3]"></span>
+                已禁止开放注册 · 仅限管理员添加
+              </span>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
               <button @click="batchResetTraffic" class="px-3.5 py-2 rounded-full bg-white hover:bg-[#ff3b30]/10 text-[#86868b] hover:text-[#ff3b30] text-xs font-medium apple-spring apple-press border border-black/10 shadow-sm">
@@ -994,8 +1001,8 @@
           <!-- 启用协议选择 (默认高隐蔽抗封) -->
           <div>
             <div class="flex items-center justify-between mb-1.5">
-              <label class="block text-[#86868b] font-medium">开放协议 (默认开启高隐蔽抗封协议)</label>
-              <span class="text-[11px] text-[#0071e3]">推荐 VLESS-WS + Reality</span>
+              <label class="block text-[#86868b] font-medium">开放协议 (默认仅开启单协议高隐蔽抗封)</label>
+              <span class="text-[11px] text-[#0071e3]">VLESS-Reality · 五位数端口 · 免证书 · 抗封</span>
             </div>
             <div class="grid grid-cols-2 gap-2 p-3 bg-[#f2f2f7] rounded-xl border border-black/[0.06]">
               <label v-for="p in allProtocols" :key="p.key" class="flex items-center gap-2 text-[12px] text-[#1d1d1f] cursor-pointer select-none">
@@ -1365,7 +1372,7 @@
         const editNodeModal = reactive({ show: false, node: null, form: { name: '', address: '', rate: 1.0, hidden: false } });
         const editUserModal = reactive({ show: false, user: null, form: { username: '', password: '', traffic_limit_gb: 100, status: 'active', expire_at: 0 } });
 
-        const nodeForm = reactive({ name: '', address: '', rate: 1.0, preset: 'global', hidden: false, enabled_protocols: ['vless-ws', 'vless'] });
+        const nodeForm = reactive({ name: '', address: '', rate: 1.0, preset: 'global', hidden: false, enabled_protocols: ['vless'] });
         const userForm = reactive({ username: '', password: '', traffic_limit_gb: 100, expire_days: 30 });
         const batchForm = reactive({ prefix: 'vip', count: 5, traffic_limit_gb: 100, expire_days: 30 });
         const passForm = reactive({ old_password: '', new_password: '' });
@@ -1593,7 +1600,7 @@
           nodeForm.rate = 1.0;
           nodeForm.preset = 'global';
           nodeForm.hidden = false;
-          nodeForm.enabled_protocols = ['vless-ws', 'vless'];
+          nodeForm.enabled_protocols = ['vless'];
           showAddNodeModal.value = true;
         };
 

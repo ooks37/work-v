@@ -332,6 +332,17 @@ func SafeEntranceFilter() gin.HandlerFunc {
 
 		path := c.Request.URL.Path
 
+		// 无论是否通过安全入口，一律严格禁止开放注册
+		if path == "/register" || path == "/api/v1/register" || path == "/api/v1/auth/register" {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":    403,
+				"error":   "Forbidden",
+				"message": "系统已全面关闭自主注册，所有账号均由管理员在控制台统一添加与分配",
+			})
+			c.Abort()
+			return
+		}
+
 		// 1. 如果访问的是安全路径 (支持带或不带结尾斜杠)，直接就地提供控制台登录页与面板，绝不 302 跳转
 		if strings.TrimSuffix(path, "/") == strings.TrimSuffix(safePath, "/") {
 			HandleSafeEntryVisit(c)
