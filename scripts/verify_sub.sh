@@ -1,12 +1,20 @@
 #!/bin/bash
 set -e
 DB="/www/wwwroot/work-v/data/work-v.db"
-TOKEN=$(sqlite3 "$DB" "SELECT sub_token FROM users WHERE status='active' LIMIT 1;")
+TOKEN=$(sqlite3 "$DB" "SELECT sub_token FROM users WHERE deleted_at IS NULL AND status='active' LIMIT 1;")
 if [ -z "$TOKEN" ]; then
-  echo "未找到活跃用户，自动写入测试用户..."
-  sqlite3 "$DB" "INSERT INTO users (username, uuid, sub_token, traffic_limit, used_traffic, expire_at, status) VALUES ('test_vip', '11111111-2222-3333-4444-555555555555', 'testsubtoken12345678', 107374182400, 1048576, 0, 'active');"
-  TOKEN="testsubtoken12345678"
+  echo "未找到活跃有效用户，创建测试订阅用户..."
+  sqlite3 "$DB" "INSERT INTO users (username, uuid, sub_token, traffic_limit, used_traffic, expire_at, status, created_at, updated_at) VALUES ('vip_user', '22222222-3333-4444-5555-666666666666', 'subtokentest99999999', 107374182400, 1048576, 0, 'active', datetime('now'), datetime('now'));"
+  TOKEN="subtokentest99999999"
 fi
+
+# 确保有可用的测试节点以验证单节点链接
+NODE_COUNT=$(sqlite3 "$DB" "SELECT count(*) FROM nodes WHERE deleted_at IS NULL;")
+if [ "$NODE_COUNT" -eq 0 ]; then
+  echo "未找到有效节点，创建示例香港节点..."
+  sqlite3 "$DB" "INSERT INTO nodes (name, address, rate, inbounds_json, token, status, created_at, updated_at) VALUES ('香港-0168高速节点', '38.76.193.152', 1.0, '', 'node_test_token', 'online', datetime('now'), datetime('now'));"
+fi
+
 
 echo "=============================================="
 echo "          Work-V 全套订阅与单节点验证         "
