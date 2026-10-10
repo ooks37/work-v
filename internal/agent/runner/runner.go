@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,7 +157,31 @@ func (r *SingboxRunner) ApplyConfig(payload *common.NodeConfigPayload) error {
 	// 被移除用户的流量会变成"无法归属"而漏计, 计费口径错乱。
 	r.activeUsers = payload.Users
 	r.currentHash = payload.ConfigHash
+
+	// 异步放行入站端口，避免操作系统防火墙 (ufw / iptables) 丢弃 5 位数随机端口流量导致客户端超时
+	go ensureFirewallPorts(payload.Inbounds)
 	return nil
+}
+
+// ensureFirewallPorts 自动放行入站端口 (支持 ufw / iptables，规避 5 位数随机端口连接超时)
+func ensureFirewallPorts(inbounds []common.InboundConfig) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	for _, in := range inbounds {
+		if !in.Enabled || in.ListenPort <= 0 || in.ListenPort > 65535 {
+			continue
+		}
+		portStr := strconv.Itoa(in.ListenPort)
+		_ = exec.Command("ufw", "allow", portStr+"/tcp").Run()
+		_ = exec.Command("ufw", "allow", portStr+"/udp").Run()
+		if err := exec.Command("iptables", "-C", "INPUT", "-p", "tcp", "--dport", portStr, "-j", "ACCEPT").Run(); err != nil {
+			_ = exec.Command("iptables", "-I", "INPUT", "-p", "tcp", "--dport", portStr, "-j", "ACCEPT").Run()
+		}
+		if err := exec.Command("iptables", "-C", "INPUT", "-p", "udp", "--dport", portStr, "-j", "ACCEPT").Run(); err != nil {
+			_ = exec.Command("iptables", "-I", "INPUT", "-p", "udp", "--dport", portStr, "-j", "ACCEPT").Run()
+		}
+	}
 }
 
 type rollingLogWriter struct {

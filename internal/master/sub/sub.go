@@ -313,6 +313,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				params.Set("type", "grpc")
 				params.Set("serviceName", svcName)
 				params.Set("encryption", "none")
+				params.Set("fp", "chrome")
 
 				link := fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-gRPC-Reality", n.Name)))
@@ -347,6 +348,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 					"port": strconv.Itoa(in.ListenPort),
 					"id":   user.UUID,
 					"aid":  "0",
+					"scy":  "auto",
 					"net":  "ws",
 					"type": "none",
 					"host": serverName,
@@ -373,6 +375,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 				params.Set("type", "tcp")
 				params.Set("flow", "xtls-rprx-vision")
 				params.Set("encryption", "none")
+				params.Set("fp", "chrome")
 
 				link := fmt.Sprintf("vless://%s@%s:%d?%s#%s",
 					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Reality", n.Name)))
@@ -1024,13 +1027,8 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 			"auto_detect_interface": true,
 			"rules": []map[string]any{
 				{
-					"geoip":    []string{"private"},
-					"outbound": "direct",
-				},
-				{
-					"geosite":  []string{"cn"},
-					"geoip":    []string{"cn"},
-					"outbound": "direct",
+					"ip_is_private": true,
+					"outbound":      "direct",
 				},
 			},
 			"final": finalOutbound,
