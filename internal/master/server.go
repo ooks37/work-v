@@ -176,6 +176,7 @@ func SetupRouter(webDistFS http.FileSystem) *gin.Engine {
 			admin.GET("/nodes/:id/links", api.HandleGetNodeLinks)
 			admin.GET("/nodes/:id/inbounds", api.HandleGetNodeInbounds)
 			admin.PUT("/nodes/:id/inbounds", api.HandleUpdateNodeInbounds)
+			admin.GET("/generate-reality-keys", api.HandleGenerateRealityKeys)
 			admin.POST("/nodes/:id/restart", api.HandleRestartNodeSingbox)
 			admin.GET("/nodes/:id/logs", api.HandleGetNodeLogs)
 			admin.POST("/nodes/:id/ping", api.HandlePingNode)

@@ -352,13 +352,15 @@ func resolveMasterBaseURL(c *gin.Context) (string, error) {
 // SSH 密码仅用于本次连接, 不落库、不写日志。
 func HandleAutoDeployNode(c *gin.Context) {
 	var req struct {
-		Name        string  `json:"name" binding:"required"`
-		Address     string  `json:"address"`
-		Rate        float64 `json:"rate"`
-		SSHHost     string  `json:"ssh_host" binding:"required"`
-		SSHPort     int     `json:"ssh_port"`
-		SSHUser     string  `json:"ssh_user"`
-		SSHPassword string  `json:"ssh_password" binding:"required"`
+		Name             string   `json:"name" binding:"required"`
+		Address          string   `json:"address"`
+		Rate             float64  `json:"rate"`
+		Hidden           bool     `json:"hidden"`
+		EnabledProtocols []string `json:"enabled_protocols"`
+		SSHHost          string   `json:"ssh_host" binding:"required"`
+		SSHPort          int      `json:"ssh_port"`
+		SSHUser          string   `json:"ssh_user"`
+		SSHPassword      string   `json:"ssh_password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写节点名称、目标服务器地址与 SSH 密码"})
@@ -388,6 +390,7 @@ func HandleAutoDeployNode(c *gin.Context) {
 		Name:         req.Name,
 		Address:      req.Address,
 		Rate:         req.Rate,
+		Hidden:       req.Hidden,
 		Token:        "node_" + RandomToken(16),
 		Status:       "offline",
 		DeployStatus: "running",
@@ -397,7 +400,7 @@ func HandleAutoDeployNode(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存节点失败: " + err.Error()})
 		return
 	}
-	service.GetOrCreateDefaultInbounds(&node)
+	service.CreateCustomInbounds(&node, req.EnabledProtocols)
 
 	service.AutoDeployNode(node.ID, service.AutoDeployRequest{
 		Host:     req.SSHHost,
@@ -432,9 +435,11 @@ func HandleGetAutoDeployStatus(c *gin.Context) {
 // HandleCreateNode 创建节点 (支持免填地址，上线自动回填)
 func HandleCreateNode(c *gin.Context) {
 	var req struct {
-		Name    string  `json:"name" binding:"required"`
-		Address string  `json:"address"`
-		Rate    float64 `json:"rate"`
+		Name             string   `json:"name" binding:"required"`
+		Address          string   `json:"address"`
+		Rate             float64  `json:"rate"`
+		Hidden           bool     `json:"hidden"`
+		EnabledProtocols []string `json:"enabled_protocols"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供有效的节点名称"})
@@ -454,6 +459,7 @@ func HandleCreateNode(c *gin.Context) {
 		Name:    req.Name,
 		Address: req.Address,
 		Rate:    req.Rate,
+		Hidden:  req.Hidden,
 		Token:   token,
 		Status:  "offline",
 	}
@@ -463,8 +469,8 @@ func HandleCreateNode(c *gin.Context) {
 		return
 	}
 
-	// 自动生成初始入站
-	service.GetOrCreateDefaultInbounds(&node)
+	// 按照管理员勾选的协议列表定制生成初始入站
+	service.CreateCustomInbounds(&node, req.EnabledProtocols)
 
 	c.JSON(http.StatusOK, node)
 }
@@ -482,6 +488,7 @@ func HandleUpdateNode(c *gin.Context) {
 		Name         string  `json:"name"`
 		Address      string  `json:"address"`
 		Rate         float64 `json:"rate"`
+		Hidden       *bool   `json:"hidden"`
 		InboundsJSON string  `json:"inbounds_json"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -497,6 +504,9 @@ func HandleUpdateNode(c *gin.Context) {
 	}
 	if req.Rate > 0 {
 		node.Rate = req.Rate
+	}
+	if req.Hidden != nil {
+		node.Hidden = *req.Hidden
 	}
 	if req.InboundsJSON != "" {
 		node.InboundsJSON = req.InboundsJSON
@@ -731,6 +741,20 @@ func HandleUpdateNodeInbounds(c *gin.Context) {
 	go hub.GlobalHub.PushConfigToNode(node.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "协议配置已更新并推送到节点", "inbounds": inbounds})
+}
+
+// HandleGenerateRealityKeys 生成新的 Reality X25519 密钥对与 ShortID
+func HandleGenerateRealityKeys(c *gin.Context) {
+	priv, pub, err := service.GenerateX25519KeyPair()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成密钥失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"private_key": priv,
+		"public_key":  pub,
+		"short_id":    service.GenerateShortID(),
+	})
 }
 
 // HandleRestartNodeSingbox 远程重启节点 Sing-box 进程

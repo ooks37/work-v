@@ -71,6 +71,33 @@ func resolveInbounds(n *model.Node) []common.InboundConfig {
 	return inbounds
 }
 
+// protoMatches 判断协议是否匹配用户筛选条件 (支持 ?proto=hy2 或 ?proto=reality 等)
+func protoMatches(inType, filter string) bool {
+	if filter == "" || filter == "all" {
+		return true
+	}
+	inType = strings.ToLower(inType)
+	filter = strings.ToLower(filter)
+	switch filter {
+	case "reality", "vless":
+		return inType == "vless" || inType == "grpc-reality" || inType == "vless-ws"
+	case "hy2", "hysteria2", "hysteria":
+		return inType == "hysteria2"
+	case "tuic":
+		return inType == "tuic"
+	case "grpc":
+		return inType == "grpc-reality"
+	case "ss", "shadowsocks":
+		return inType == "shadowsocks"
+	case "trojan":
+		return inType == "trojan"
+	case "anytls":
+		return inType == "anytls"
+	default:
+		return strings.Contains(inType, filter)
+	}
+}
+
 // HandleSubscription 处理多端自适应订阅主入口
 func HandleSubscription(c *gin.Context) {
 	token := c.Param("token")
@@ -97,9 +124,9 @@ func HandleSubscription(c *gin.Context) {
 		return
 	}
 
-	// 读取所有已配置且未删除的节点
+	// 读取所有已配置且未删除的非隐藏节点 (过滤管理员设置的隐藏节点)
 	var nodes []model.Node
-	model.DB.Find(&nodes)
+	model.DB.Where("hidden = ?", false).Find(&nodes)
 
 	// 获取客户端类型
 	ua := strings.ToLower(c.GetHeader("User-Agent"))
@@ -133,6 +160,7 @@ func HandleSubscription(c *gin.Context) {
 // generateBase64Links 生成 Base64 标准节点链接
 func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 	var links []string
+	protoFilter := strings.ToLower(c.Query("proto"))
 
 	for _, n := range nodes {
 		nodeAddr := resolveNodeAddress(&n, c)
@@ -145,7 +173,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 		}
 
 		for _, in := range inbounds {
-			if !in.Enabled {
+			if !in.Enabled || !protoMatches(in.Type, protoFilter) {
 				continue
 			}
 
@@ -272,6 +300,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 	var proxies []map[string]any
 	var proxyNames []string
 	usedNames := make(map[string]int) // 同名节点会导致 Mihomo 拒绝整份配置, 这里强制去重
+	protoFilter := strings.ToLower(c.Query("proto"))
 
 	for _, n := range nodes {
 		nodeAddr := resolveNodeAddress(&n, c)
@@ -284,7 +313,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 		}
 
 		for _, in := range inbounds {
-			if !in.Enabled {
+			if !in.Enabled || !protoMatches(in.Type, protoFilter) {
 				continue
 			}
 
@@ -531,6 +560,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 	var outbounds []map[string]any
 	var outTags []string
+	protoFilter := strings.ToLower(c.Query("proto"))
 
 	for _, n := range nodes {
 		nodeAddr := resolveNodeAddress(&n, c)
@@ -543,7 +573,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 		}
 
 		for _, in := range inbounds {
-			if !in.Enabled {
+			if !in.Enabled || !protoMatches(in.Type, protoFilter) {
 				continue
 			}
 
@@ -897,7 +927,7 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
 			qrTarget := url.QueryEscape(sl.Link)
 			safeLink := html.EscapeString(sl.Link)
 			nodeCardsHTML.WriteString(fmt.Sprintf(`
-      <div style="background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:12px 14px;margin-bottom:10px;">
+      <div class="single-node-card" data-proto="%s" style="background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:12px 14px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
           <div style="flex:1;min-width:180px;">
             <div style="display:flex;align-items:center;gap:6px;">
@@ -916,6 +946,7 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
           <div style="font-size:10px;color:#94a3b8;margin-top:4px;">客户端扫码直接接入该节点</div>
         </div>
       </div>`,
+				strings.ToLower(sl.Protocol),
 				html.EscapeString(sl.Name), badgeColor, badgeColor, strings.ToUpper(sl.Protocol),
 				html.EscapeString(sl.Description), sl.Port, sl.PortType,
 				safeLink, qrID, qrID, qrTarget,
@@ -929,9 +960,16 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
     <div style="margin-top:24px;border-top:1px solid rgba(255,255,255,0.08);padding-top:20px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <span style="font-size:14px;font-weight:700;color:#f8fafc;">📡 独立节点直连 (%d 个接入点)</span>
-        <span style="font-size:11px;color:#94a3b8;">支持单个协议直接导入使用</span>
+        <span style="font-size:11px;color:#94a3b8;">可按协议筛选直连链接</span>
       </div>
-      <div>%s</div>
+      <div style="display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px;">
+        <button onclick="filterProto('all')" class="proto-tag active" id="btn-proto-all" style="background:#10b98120;color:#34d399;border:1px solid #10b98140;padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">全部协议</button>
+        <button onclick="filterProto('vless')" class="proto-tag" id="btn-proto-vless" style="background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;">Reality</button>
+        <button onclick="filterProto('hy2')" class="proto-tag" id="btn-proto-hy2" style="background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;">Hysteria 2</button>
+        <button onclick="filterProto('tuic')" class="proto-tag" id="btn-proto-tuic" style="background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;">TUIC</button>
+        <button onclick="filterProto('ss')" class="proto-tag" id="btn-proto-ss" style="background:rgba(255,255,255,0.05);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);padding:4px 10px;border-radius:8px;font-size:11px;cursor:pointer;">Shadowsocks</button>
+      </div>
+      <div id="nodes-container">%s</div>
     </div>`, totalSingleLinks, nodeCardsHTML.String())
 	}
 
@@ -1027,6 +1065,42 @@ func renderUserPortal(c *gin.Context, user *model.User, nodes []model.Node) {
       if (el) {
         el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
       }
+    }
+    function filterProto(tag) {
+      var tags = ['all', 'vless', 'hy2', 'tuic', 'ss'];
+      tags.forEach(function(t) {
+        var b = document.getElementById('btn-proto-' + t);
+        if (b) {
+          if (t === tag) {
+            b.style.background = '#10b98120';
+            b.style.color = '#34d399';
+            b.style.borderColor = '#10b98140';
+            b.style.fontWeight = '600';
+          } else {
+            b.style.background = 'rgba(255,255,255,0.05)';
+            b.style.color = '#94a3b8';
+            b.style.borderColor = 'rgba(255,255,255,0.08)';
+            b.style.fontWeight = 'normal';
+          }
+        }
+      });
+      var cards = document.querySelectorAll('.single-node-card');
+      cards.forEach(function(card) {
+        var proto = (card.getAttribute('data-proto') || '').toLowerCase();
+        if (tag === 'all') {
+          card.style.display = 'block';
+        } else if (tag === 'vless' && (proto.indexOf('vless') !== -1 || proto.indexOf('reality') !== -1)) {
+          card.style.display = 'block';
+        } else if (tag === 'hy2' && proto.indexOf('hy') !== -1) {
+          card.style.display = 'block';
+        } else if (tag === 'tuic' && proto.indexOf('tuic') !== -1) {
+          card.style.display = 'block';
+        } else if (tag === 'ss' && (proto.indexOf('shadowsocks') !== -1 || proto.indexOf('ss') !== -1)) {
+          card.style.display = 'block';
+        } else {
+          card.style.display = 'none';
+        }
+      });
     }
   </script>
 </body>

@@ -25,6 +25,7 @@ type Node struct {
 	Address    string     `gorm:"size:255;not null" json:"address"`          // 节点客户端访问地址 (域名或公网IP)
 	Rate       float64    `gorm:"default:1.0" json:"rate"`                   // 流量计算倍率
 	Status     string     `gorm:"size:20;default:'offline'" json:"status"`   // "online" | "offline"
+	Hidden     bool       `gorm:"default:false" json:"hidden"`               // 是否在用户订阅中隐藏 (仅管理员可见/测试节点)
 	LastSeenAt *time.Time `json:"last_seen_at"`                              // 最近一次心跳时间
 
 	// 动态监控数据 (由心跳更新)

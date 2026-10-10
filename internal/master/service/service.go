@@ -66,33 +66,33 @@ func EnsureAllNodesInbounds() {
 	}
 }
 
-// GetOrCreateDefaultInbounds 为节点生成默认开箱即用的 Inbounds (默认 VLESS-Reality 免证书)
-func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
-	if n.InboundsJSON != "" {
-		var inbounds []common.InboundConfig
-		if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err == nil && len(inbounds) > 0 {
-			return inbounds
-		}
-	}
-
+// CreateCustomInbounds 根据管理员指定的协议选择列表定制创建入站配置
+func CreateCustomInbounds(n *model.Node, enabledProtocols []string) []common.InboundConfig {
 	privKey, pubKey, _ := GenerateX25519KeyPair()
 	shortID := GenerateShortID()
 
-	// 默认开箱配置：全面支持 5 大现代化高速防封协议 (参考 iwantrun 最佳实践)
-	// 1. VLESS + REALITY + Vision (443/TCP)
-	// 2. Hysteria 2 (8443/UDP)
-	// 3. VLESS + gRPC + REALITY (2053/TCP)
-	// 4. TUIC v5 (8444/UDP, BBR+H3)
-	// 5. AnyTLS (8445/TCP)
+	protoMap := make(map[string]bool)
+	for _, p := range enabledProtocols {
+		protoMap[strings.ToLower(strings.TrimSpace(p))] = true
+	}
+	// 若未指定任何协议，默认启用 4 大主流高速协议
+	if len(enabledProtocols) == 0 {
+		protoMap["vless"] = true
+		protoMap["hysteria2"] = true
+		protoMap["grpc-reality"] = true
+		protoMap["tuic"] = true
+	}
+
 	inbounds := []common.InboundConfig{
 		{
 			Type:       "vless",
 			Tag:        "vless-reality-in",
 			ListenPort: 2083,
-			Enabled:    true,
+			Enabled:    protoMap["vless"] || protoMap["reality"] || protoMap["vless-reality"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
 				"dest":        "gateway.icloud.com:443",
+				"flow":        "xtls-rprx-vision",
 				"private_key": privKey,
 				"public_key":  pubKey,
 				"short_id":    shortID,
@@ -102,7 +102,7 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			Type:       "hysteria2",
 			Tag:        "hy2-in",
 			ListenPort: 8443,
-			Enabled:    true,
+			Enabled:    protoMap["hysteria2"] || protoMap["hy2"],
 			Options: map[string]any{
 				"insecure":  true,
 				"up_mbps":   100,
@@ -113,7 +113,7 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			Type:       "grpc-reality",
 			Tag:        "grpc-reality-in",
 			ListenPort: 2053,
-			Enabled:    true,
+			Enabled:    protoMap["grpc-reality"] || protoMap["grpc"],
 			Options: map[string]any{
 				"server_name":  "gateway.icloud.com",
 				"dest":         "gateway.icloud.com:443",
@@ -127,7 +127,7 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			Type:       "tuic",
 			Tag:        "tuic-in",
 			ListenPort: 8444,
-			Enabled:    true,
+			Enabled:    protoMap["tuic"],
 			Options: map[string]any{
 				"congestion_control": "bbr",
 				"alpn":               []string{"h3"},
@@ -138,7 +138,7 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			Type:       "anytls",
 			Tag:        "anytls-in",
 			ListenPort: 8445,
-			Enabled:    false, // 默认待激活
+			Enabled:    protoMap["anytls"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
 				"insecure":    true,
@@ -148,7 +148,7 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			Type:       "shadowsocks",
 			Tag:        "ss-in",
 			ListenPort: 8388,
-			Enabled:    false,
+			Enabled:    protoMap["shadowsocks"] || protoMap["ss"],
 			Options: map[string]any{
 				"method":   "2022-blake3-aes-128-gcm",
 				"password": "d29ya3YxMjM0NTY3ODkwMQ==",
@@ -158,7 +158,7 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			Type:       "vless-ws",
 			Tag:        "vless-ws-in",
 			ListenPort: 2096,
-			Enabled:    false,
+			Enabled:    protoMap["vless-ws"] || protoMap["ws"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
 				"path":        "/ws",
@@ -168,7 +168,7 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 			Type:       "trojan",
 			Tag:        "trojan-in",
 			ListenPort: 8446,
-			Enabled:    false,
+			Enabled:    protoMap["trojan"],
 			Options: map[string]any{
 				"server_name": "gateway.icloud.com",
 			},
@@ -182,6 +182,17 @@ func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
 	}
 
 	return inbounds
+}
+
+// GetOrCreateDefaultInbounds 为节点生成默认开箱即用的 Inbounds (默认 VLESS-Reality 免证书)
+func GetOrCreateDefaultInbounds(n *model.Node) []common.InboundConfig {
+	if n.InboundsJSON != "" {
+		var inbounds []common.InboundConfig
+		if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err == nil && len(inbounds) > 0 {
+			return inbounds
+		}
+	}
+	return CreateCustomInbounds(n, nil)
 }
 
 // ProtocolShareLink 单个协议的客户端直连链接与元数据

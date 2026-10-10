@@ -339,6 +339,7 @@
                     <h3 class="text-base font-bold text-white group-hover:text-emerald-400 transition flex items-center gap-2">
                       {{ node.name }}
                       <span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono font-normal">倍率: {{ node.rate }}x</span>
+                      <span v-if="node.hidden" class="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold" title="该节点已在客户端订阅与用户门户中隐藏">🙈 订阅隐藏</span>
                     </h3>
                     <p class="text-xs text-slate-400 font-mono mt-0.5">{{ node.address }}</p>
                   </div>
@@ -374,6 +375,9 @@
                   </button>
                   <button @click="openInboundsModal(node)" class="px-2 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 font-semibold flex items-center gap-1 border border-purple-500/20 transition active:scale-95" title="配置协议入站与端口">
                     <span>⚙️ 协议</span>
+                  </button>
+                  <button @click="toggleNodeHidden(node)" :class="node.hidden ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'" class="px-2 py-1 rounded-lg hover:bg-slate-700 font-semibold flex items-center gap-1 border transition" :title="node.hidden ? '点击设为订阅可见' : '点击在订阅中隐藏该节点'">
+                    <span>{{ node.hidden ? '🙈 隐藏' : '👁️ 可见' }}</span>
                   </button>
                   <button @click="openNodeLogsModal(node)" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold flex items-center gap-1 border border-slate-700 transition" title="查看内核实时日志">
                     <span>📜 日志</span>
@@ -545,6 +549,34 @@
             <label class="block text-xs font-semibold text-slate-300 mb-1">客户端访问地址 (留空 = 用上面的服务器地址)</label>
             <input v-model="autoForm.address" placeholder="如需用域名/CDN，可在此指定" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500 text-xs">
           </div>
+
+          <!-- 协议多选池 -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-semibold text-slate-300">选择要启用的协议 (多选)</label>
+              <div class="flex gap-2 text-[11px]">
+                <button type="button" @click="selectAllProtocols(autoForm)" class="text-emerald-400 hover:underline">全选</button>
+                <button type="button" @click="selectTopProtocols(autoForm)" class="text-cyan-400 hover:underline">推荐极速防封</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+              <label v-for="p in allProtocols" :key="p.key" :class="autoForm.enabled_protocols.includes(p.key) ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'" class="p-2 rounded-xl border flex items-center gap-1.5 cursor-pointer text-xs select-none transition">
+                <input type="checkbox" :value="p.key" v-model="autoForm.enabled_protocols" class="hidden">
+                <span>{{ p.icon }}</span>
+                <span class="truncate font-semibold text-[11px]">{{ p.name }}</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 隐藏节点选项 -->
+          <div class="p-3 bg-slate-900/60 rounded-xl border border-slate-800 space-y-1">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="autoForm.hidden" class="w-4 h-4 rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0 cursor-pointer">
+              <span class="text-xs font-semibold text-slate-300">🙈 在用户订阅中隐藏该节点 (Hidden)</span>
+            </label>
+            <p class="text-[11px] text-slate-500 pl-6">开启后，客户端普通订阅与自服务门户不会包含此节点，仅管理员可见并可专线中转调度。</p>
+          </div>
+
           <p class="text-[11px] text-slate-500 leading-relaxed">
             主控会用 SSH 登录目标服务器，自动安装 Sing-box 内核 + Agent 守护并接入纳管（需要 root 密码登录，且目标机能访问主控域名）。
           </p>
@@ -593,6 +625,33 @@
                 <div class="text-[10px] opacity-70">自定义端口映射</div>
               </button>
             </div>
+          </div>
+
+          <!-- 协议多选池 -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-semibold text-slate-300">选择要启用的协议 (多选)</label>
+              <div class="flex gap-2 text-[11px]">
+                <button type="button" @click="selectAllProtocols(nodeForm)" class="text-emerald-400 hover:underline">全选</button>
+                <button type="button" @click="selectTopProtocols(nodeForm)" class="text-cyan-400 hover:underline">推荐极速防封</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+              <label v-for="p in allProtocols" :key="p.key" :class="nodeForm.enabled_protocols.includes(p.key) ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'" class="p-2 rounded-xl border flex items-center gap-1.5 cursor-pointer text-xs select-none transition">
+                <input type="checkbox" :value="p.key" v-model="nodeForm.enabled_protocols" class="hidden">
+                <span>{{ p.icon }}</span>
+                <span class="truncate font-semibold text-[11px]">{{ p.name }}</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 隐藏节点选项 -->
+          <div class="p-3 bg-slate-900/60 rounded-xl border border-slate-800 space-y-1">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="nodeForm.hidden" class="w-4 h-4 rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0 cursor-pointer">
+              <span class="text-xs font-semibold text-slate-300">🙈 在用户订阅中隐藏该节点 (Hidden)</span>
+            </label>
+            <p class="text-[11px] text-slate-500 pl-6">开启后，客户端普通订阅与自服务门户不会包含此节点，仅管理员可见并可专线中转调度。</p>
           </div>
 
           <!-- NAT 外部端口 (仅在 NAT 模式展示) -->
@@ -1042,48 +1101,184 @@
 
     <!-- 弹窗: 节点协议入站与端口深度配置 -->
     <div v-if="inboundsModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-      <div class="glass-panel max-w-2xl w-full p-6 rounded-3xl border border-slate-800 shadow-2xl max-h-[90vh] flex flex-col">
+      <div class="glass-panel max-w-3xl w-full p-6 rounded-3xl border border-slate-800 shadow-2xl max-h-[92vh] flex flex-col">
         <div class="flex items-start justify-between pb-4 border-b border-slate-800">
           <div>
             <h3 class="text-lg font-bold text-white flex items-center gap-2">
-              <span>⚙️ 节点协议入站与端口配置</span>
+              <span>⚙️ 节点协议入站与深度参数配置</span>
               <span class="text-xs px-2.5 py-0.5 rounded-full bg-purple-500/10 text-purple-300 font-mono">{{ inboundsModal.node?.name }}</span>
             </h3>
-            <p class="text-xs text-slate-400 mt-1">按需开启/关闭协议，自由修改监听端口与伪装域名，保存后自动推送到节点热生效</p>
+            <p class="text-xs text-slate-400 mt-1">按需开启/关闭协议，自由修改端口、Reality公私钥、SNI伪装与高级流控参数，保存后即时推送到节点生效</p>
           </div>
           <button @click="inboundsModal.show = false" class="text-slate-400 hover:text-white text-lg">✕</button>
         </div>
 
-        <div class="flex-1 overflow-y-auto py-4 space-y-3">
+        <!-- 顶部快捷添加新协议栏 -->
+        <div class="pt-3 pb-1 flex items-center justify-between flex-wrap gap-2">
+          <span class="text-xs font-semibold text-slate-300">➕ 快速开启新协议:</span>
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <button v-for="p in allProtocols" :key="p.key" @click="addNewInbound(p.key)" class="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-emerald-400 border border-slate-800 text-[11px] font-semibold flex items-center gap-1 transition">
+              <span>{{ p.icon }}</span>
+              <span>{{ p.name }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto py-3 space-y-3.5">
+          <div v-if="!inboundsModal.list || inboundsModal.list.length === 0" class="py-12 text-center text-slate-500 text-xs">
+            该节点暂未配置入站协议，请点击上方按钮快速添加协议。
+          </div>
           <div v-for="(inb, idx) in inboundsModal.list" :key="inb.tag || idx" class="p-4 bg-slate-900/80 rounded-2xl border border-slate-800 space-y-3">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2.5">
                 <input type="checkbox" v-model="inb.enabled" :id="'inb_' + idx" class="w-4 h-4 rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0 cursor-pointer">
-                <label :for="'inb_' + idx" class="text-sm font-bold text-white cursor-pointer select-none uppercase">
-                  {{ inb.type }} ({{ inb.tag }})
+                <label :for="'inb_' + idx" class="text-sm font-bold text-white cursor-pointer select-none uppercase flex items-center gap-2">
+                  <span>{{ inb.type }}</span>
+                  <span class="text-xs font-mono font-normal text-slate-400">({{ inb.tag }})</span>
                 </label>
               </div>
-              <span :class="inb.enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'" class="text-xs px-2.5 py-0.5 rounded-full border font-semibold">
-                {{ inb.enabled ? '启用中' : '已停用' }}
-              </span>
+              <div class="flex items-center gap-2">
+                <span :class="inb.enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'" class="text-xs px-2.5 py-0.5 rounded-full border font-semibold">
+                  {{ inb.enabled ? '启用中' : '已停用' }}
+                </span>
+                <button type="button" @click="inb._showAdvanced = !inb._showAdvanced" class="text-xs px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700 transition">
+                  {{ inb._showAdvanced ? '▼ 收起高级参数' : '⚙️ 高级/隐藏参数' }}
+                </button>
+                <button type="button" @click="removeInbound(idx)" class="text-xs px-2 py-0.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition" title="删除此协议">
+                  🗑️
+                </button>
+              </div>
             </div>
 
+            <!-- 基础设置 -->
             <div class="grid grid-cols-2 gap-3 text-xs">
               <div>
-                <label class="block text-slate-400 font-medium mb-1">监听端口</label>
+                <label class="block text-slate-400 font-medium mb-1">监听端口 (Listen Port)</label>
                 <input v-model.number="inb.listen_port" type="number" min="1" max="65535" class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-purple-500">
               </div>
               <div v-if="inb.options && inb.options.server_name !== undefined">
-                <label class="block text-slate-400 font-medium mb-1">伪装域名 (SNI)</label>
+                <label class="block text-slate-400 font-medium mb-1">伪装域名 (SNI / Server Name)</label>
                 <input v-model="inb.options.server_name" class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-purple-500">
               </div>
-              <div v-if="inb.options && inb.options.path !== undefined">
-                <label class="block text-slate-400 font-medium mb-1">WebSocket 路径</label>
-                <input v-model="inb.options.path" class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-purple-500">
+            </div>
+
+            <!-- 高级/隐藏参数折叠卡片 -->
+            <div v-show="inb._showAdvanced" class="p-3 bg-slate-950/70 rounded-xl border border-slate-800/80 space-y-3 text-xs">
+              <!-- Reality 参数 (VLESS Reality / gRPC Reality) -->
+              <div v-if="inb.type === 'vless' || (inb.options && (inb.options.private_key !== undefined || inb.options.dest !== undefined))" class="space-y-2.5">
+                <div class="flex items-center justify-between pb-1 border-b border-slate-800/80">
+                  <span class="font-bold text-amber-300">🌟 Reality 核心安全配置与密钥</span>
+                  <button type="button" @click="regenerateRealityKeys(inb)" class="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/20 text-[11px] transition">
+                    🔑 在线重新生成 Reality 密钥对与 ShortID
+                  </button>
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label class="block text-slate-400 mb-1">回落目标 (Dest)</label>
+                    <input v-model="inb.options.dest" placeholder="gateway.icloud.com:443" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px] focus:outline-none focus:border-amber-500">
+                  </div>
+                  <div>
+                    <label class="block text-slate-400 mb-1">流控算法 (Flow)</label>
+                    <input v-model="inb.options.flow" placeholder="xtls-rprx-vision" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px] focus:outline-none focus:border-amber-500">
+                  </div>
+                </div>
+                <div class="grid grid-cols-3 gap-2.5">
+                  <div class="col-span-2">
+                    <label class="block text-slate-400 mb-1">Reality 公钥 (Public Key)</label>
+                    <input v-model="inb.options.public_key" placeholder="公钥" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-emerald-300 font-mono text-[11px] focus:outline-none focus:border-amber-500">
+                  </div>
+                  <div>
+                    <label class="block text-slate-400 mb-1">Short ID</label>
+                    <input v-model="inb.options.short_id" placeholder="8位十六进制" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-cyan-300 font-mono text-[11px] focus:outline-none focus:border-amber-500">
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-slate-400 mb-1">Reality 私钥 (Private Key · 绝不下发给客户端)</label>
+                  <input v-model="inb.options.private_key" placeholder="私钥" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-amber-300 font-mono text-[11px] focus:outline-none focus:border-amber-500">
+                </div>
               </div>
-              <div v-if="inb.options && inb.options.service_name !== undefined">
-                <label class="block text-slate-400 font-medium mb-1">gRPC 业务名称</label>
-                <input v-model="inb.options.service_name" class="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono focus:outline-none focus:border-purple-500">
+
+              <!-- Hysteria 2 参数 -->
+              <div v-if="inb.type === 'hysteria2'" class="space-y-2.5">
+                <span class="font-bold text-amber-300 block pb-1 border-b border-slate-800/80">⚡ Hysteria 2 极速流控与伪装</span>
+                <div class="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label class="block text-slate-400 mb-1">上行带宽速率限制 (Up Mbps)</label>
+                    <input v-model.number="inb.options.up_mbps" type="number" placeholder="100" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                  </div>
+                  <div>
+                    <label class="block text-slate-400 mb-1">下行带宽速率限制 (Down Mbps)</label>
+                    <input v-model.number="inb.options.down_mbps" type="number" placeholder="100" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label class="block text-slate-400 mb-1">混淆密码 (Obfs · 选填)</label>
+                    <input v-model="inb.options.obfs" placeholder="留空则不开启混淆" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                  </div>
+                  <div>
+                    <label class="block text-slate-400 mb-1">伪装回落网址 (Masquerade · 选填)</label>
+                    <input v-model="inb.options.masquerade" placeholder="如: https://bing.com" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                  </div>
+                </div>
+              </div>
+
+              <!-- TUIC v5 参数 -->
+              <div v-if="inb.type === 'tuic'" class="space-y-2.5">
+                <span class="font-bold text-cyan-300 block pb-1 border-b border-slate-800/80">🚀 TUIC v5 拥塞控制</span>
+                <div>
+                  <label class="block text-slate-400 mb-1">拥塞控制算法 (Congestion Controller)</label>
+                  <select v-model="inb.options.congestion_controller" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                    <option value="bbr">bbr (推荐·高抗丢包)</option>
+                    <option value="cubic">cubic (经典低抖动)</option>
+                    <option value="new_reno">new_reno</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Shadowsocks 参数 -->
+              <div v-if="inb.type === 'shadowsocks'" class="space-y-2.5">
+                <span class="font-bold text-emerald-300 block pb-1 border-b border-slate-800/80">🔒 Shadowsocks 2022 加密设置</span>
+                <div class="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label class="block text-slate-400 mb-1">加密算法 (Cipher Method)</label>
+                    <select v-model="inb.options.method" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                      <option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm (推荐)</option>
+                      <option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>
+                      <option value="aes-128-gcm">aes-128-gcm</option>
+                      <option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-slate-400 mb-1">密钥密码 (PSK / Password)</label>
+                    <input v-model="inb.options.password" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Trojan / AnyTLS 密码参数 -->
+              <div v-if="inb.type === 'trojan' || inb.type === 'anytls'" class="space-y-2.5">
+                <span class="font-bold text-purple-300 block pb-1 border-b border-slate-800/80">🔑 {{ inb.type.toUpperCase() }} 连接密码</span>
+                <div>
+                  <label class="block text-slate-400 mb-1">连接密码 (Password)</label>
+                  <input v-model="inb.options.password" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                </div>
+              </div>
+
+              <!-- WebSocket 路径 -->
+              <div v-if="inb.options && inb.options.path !== undefined" class="space-y-2.5">
+                <div>
+                  <label class="block text-slate-400 mb-1">WebSocket 路径 (Path)</label>
+                  <input v-model="inb.options.path" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                </div>
+              </div>
+
+              <!-- gRPC 服务名称 -->
+              <div v-if="inb.options && inb.options.service_name !== undefined" class="space-y-2.5">
+                <div>
+                  <label class="block text-slate-400 mb-1">gRPC 业务名称 (Service Name)</label>
+                  <input v-model="inb.options.service_name" class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white font-mono text-[11px]">
+                </div>
               </div>
             </div>
           </div>
@@ -1117,6 +1312,13 @@
           <div>
             <label class="block text-slate-300 font-semibold mb-1">流量倍率 (Rate)</label>
             <input v-model.number="editNodeModal.form.rate" type="number" step="0.1" min="0" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm font-mono focus:outline-none focus:border-emerald-500">
+          </div>
+          <div class="p-3 bg-slate-900/60 rounded-xl border border-slate-800 space-y-1">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="editNodeModal.form.hidden" class="w-4 h-4 rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0 cursor-pointer">
+              <span class="text-xs font-semibold text-slate-300">🙈 在用户订阅与自服务门户中隐藏此节点 (Hidden)</span>
+            </label>
+            <p class="text-[11px] text-slate-500 pl-6">勾选后该节点将从普通订阅中屏蔽剔除，适合专线中转或测试维护阶段。</p>
           </div>
           <div class="pt-2 flex justify-end gap-2">
             <button type="button" @click="editNodeModal.show = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold">取消</button>
@@ -1361,6 +1563,28 @@
           return list;
         });
 
+        // 支持的协议元数据池
+        const allProtocols = [
+          { key: 'vless', name: 'VLESS Reality', tag: 'TCP 防封', icon: '🌟' },
+          { key: 'hysteria2', name: 'Hysteria 2', tag: 'UDP 极速', icon: '⚡' },
+          { key: 'tuic', name: 'TUIC v5', tag: 'QUIC 高抗丢包', icon: '🚀' },
+          { key: 'grpc', name: 'gRPC Reality', tag: '高防封', icon: '🛡️' },
+          { key: 'shadowsocks', name: 'Shadowsocks 2022', tag: '经典稳定', icon: '🔒' },
+          { key: 'trojan', name: 'Trojan', tag: '标准 TLS', icon: '🌐' },
+          { key: 'anytls', name: 'AnyTLS', tag: 'TLS 流量', icon: '🎯' },
+          { key: 'vless-ws', name: 'VLESS-WS', tag: 'CDN 兼容', icon: '☁️' }
+        ];
+
+        const defaultProtocolKeys = () => allProtocols.map(p => p.key);
+
+        const selectAllProtocols = (form) => {
+          form.enabled_protocols = defaultProtocolKeys();
+        };
+
+        const selectTopProtocols = (form) => {
+          form.enabled_protocols = ['vless', 'hysteria2', 'tuic'];
+        };
+
         // 模态框状态
         const showAddNodeModal = ref(false);
         const showAdvancedNodeFields = ref(false);
@@ -1368,7 +1592,7 @@
         const customNatPort = ref(10086);
         const selectedNodeForInstall = ref(null);
         const inboundsModal = reactive({ show: false, node: null, list: [] });
-        const editNodeModal = reactive({ show: false, node: null, form: { name: '', address: '', rate: 1.0 } });
+        const editNodeModal = reactive({ show: false, node: null, form: { name: '', address: '', rate: 1.0, hidden: false } });
         const nodeLogsModal = reactive({ show: false, node: null, logs: [], loading: false });
 
         const showAddUserModal = ref(false);
@@ -1391,11 +1615,28 @@
         const safeEntrance = reactive({ enabled: true, safe_path: '', url: '' });
         const safePathInput = ref('');
 
-        const nodeForm = reactive({ name: '', address: '', rate: 1.0, preset: 'global', nat_port: '' });
+        const nodeForm = reactive({
+          name: '',
+          address: '',
+          rate: 1.0,
+          preset: 'global',
+          nat_port: '',
+          hidden: false,
+          enabled_protocols: defaultProtocolKeys()
+        });
 
         // 全自动部署 (SSH 一键纳管)
         const addNodeMode = ref('auto');
-        const autoForm = reactive({ name: '', host: '', port: 22, user: 'root', password: '', address: '' });
+        const autoForm = reactive({
+          name: '',
+          host: '',
+          port: 22,
+          user: 'root',
+          password: '',
+          address: '',
+          hidden: false,
+          enabled_protocols: defaultProtocolKeys()
+        });
         const autoDeploy = reactive({ running: false, nodeId: 0, status: '', log: '' });
         let autoPoller = null;
 
@@ -1405,12 +1646,16 @@
           nodeForm.rate = 1.0;
           nodeForm.preset = 'global';
           nodeForm.nat_port = '';
+          nodeForm.hidden = false;
+          nodeForm.enabled_protocols = defaultProtocolKeys();
           autoForm.name = '节点-' + (nodes.value.length + 1);
           autoForm.host = '';
           autoForm.password = '';
           autoForm.port = 22;
           autoForm.user = 'root';
           autoForm.address = '';
+          autoForm.hidden = false;
+          autoForm.enabled_protocols = defaultProtocolKeys();
           autoDeploy.running = false;
           autoDeploy.nodeId = 0;
           autoDeploy.status = '';
@@ -1592,7 +1837,9 @@
                 ssh_host: autoForm.host,
                 ssh_port: Number(autoForm.port) || 22,
                 ssh_user: autoForm.user || 'root',
-                ssh_password: autoForm.password
+                ssh_password: autoForm.password,
+                hidden: autoForm.hidden,
+                enabled_protocols: autoForm.enabled_protocols
               })
             });
             autoDeploy.nodeId = res.node.id;
@@ -1881,14 +2128,35 @@
           }
         };
 
-        // 协议入站管理
+        // 节点隐藏切换 (快捷一键)
+        const toggleNodeHidden = async (node) => {
+          try {
+            const newHidden = !node.hidden;
+            await apiFetch(`/api/v1/admin/nodes/${node.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ hidden: newHidden })
+            });
+            node.hidden = newHidden;
+            addToast(`节点【${node.name}】已设为${newHidden ? '🙈 订阅隐藏' : '👁️ 订阅可见'}`);
+          } catch (err) {
+            addToast(`切换显隐状态失败: ${err.message}`, 'error');
+          }
+        };
+
+        // 协议入站管理与高级参数
         const openInboundsModal = async (node) => {
           inboundsModal.node = node;
           inboundsModal.list = [];
           inboundsModal.show = true;
           try {
             const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/inbounds`);
-            inboundsModal.list = res.inbounds || [];
+            const list = res.inbounds || [];
+            list.forEach(inb => {
+              if (!inb.options) inb.options = {};
+              inb._showAdvanced = false;
+            });
+            inboundsModal.list = list;
           } catch (err) {
             addToast(`加载入站协议失败: ${err.message}`, 'error');
           }
@@ -1903,9 +2171,175 @@
               body: JSON.stringify({ inbounds: inboundsModal.list })
             });
             inboundsModal.show = false;
-            addToast('协议配置已保存并推送至节点！');
+            addToast('协议配置已保存并推送至节点生效！');
           } catch (err) {
             addToast(`保存协议失败: ${err.message}`, 'error');
+          }
+        };
+
+        const regenerateRealityKeys = async (inb) => {
+          try {
+            const keys = await apiFetch('/api/v1/admin/generate-reality-keys');
+            if (!inb.options) inb.options = {};
+            inb.options.private_key = keys.private_key;
+            inb.options.public_key = keys.public_key;
+            inb.options.short_id = keys.short_id;
+            addToast('已生成全新 Reality X25519 密钥对与 ShortID！记得保存');
+          } catch (err) {
+            addToast('生成密钥对失败: ' + err.message, 'error');
+          }
+        };
+
+        const generateRandomPassword = () => {
+          const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+          let str = '';
+          for (let i = 0; i < 16; i++) {
+            str += chars.charAt(Math.floor(Math.random() * chars.length));
+          }
+          return str;
+        };
+
+        const addNewInbound = (protoKey) => {
+          if (!inboundsModal.list) inboundsModal.list = [];
+          const portMap = {
+            'vless': 443,
+            'hysteria2': 8443,
+            'tuic': 8444,
+            'grpc': 2053,
+            'shadowsocks': 8388,
+            'trojan': 8445,
+            'anytls': 8446,
+            'vless-ws': 8447
+          };
+          const port = portMap[protoKey] || (8000 + inboundsModal.list.length);
+          let newInb = null;
+          if (protoKey === 'vless') {
+            newInb = {
+              node_id: inboundsModal.node?.id || 0,
+              tag: 'vless-reality-in',
+              type: 'vless',
+              listen_port: port,
+              enabled: true,
+              options: {
+                server_name: 'gateway.icloud.com',
+                dest: 'gateway.icloud.com:443',
+                flow: 'xtls-rprx-vision',
+                private_key: '',
+                public_key: '',
+                short_id: ''
+              },
+              _showAdvanced: true
+            };
+            regenerateRealityKeys(newInb);
+          } else if (protoKey === 'hysteria2') {
+            newInb = {
+              node_id: inboundsModal.node?.id || 0,
+              tag: 'hy2-in',
+              type: 'hysteria2',
+              listen_port: port,
+              enabled: true,
+              options: {
+                server_name: 'icloud.com',
+                up_mbps: 100,
+                down_mbps: 100,
+                obfs: '',
+                masquerade: ''
+              },
+              _showAdvanced: true
+            };
+          } else if (protoKey === 'tuic') {
+            newInb = {
+              node_id: inboundsModal.node?.id || 0,
+              tag: 'tuic-in',
+              type: 'tuic',
+              listen_port: port,
+              enabled: true,
+              options: {
+                server_name: 'icloud.com',
+                congestion_controller: 'bbr'
+              },
+              _showAdvanced: true
+            };
+          } else if (protoKey === 'grpc') {
+            newInb = {
+              node_id: inboundsModal.node?.id || 0,
+              tag: 'vless-grpc-reality-in',
+              type: 'vless',
+              listen_port: port,
+              enabled: true,
+              options: {
+                server_name: 'gateway.icloud.com',
+                dest: 'gateway.icloud.com:443',
+                service_name: 'grpc-reality',
+                private_key: '',
+                public_key: '',
+                short_id: ''
+              },
+              _showAdvanced: true
+            };
+            regenerateRealityKeys(newInb);
+          } else if (protoKey === 'shadowsocks') {
+            newInb = {
+              node_id: inboundsModal.node?.id || 0,
+              tag: 'shadowsocks-in',
+              type: 'shadowsocks',
+              listen_port: port,
+              enabled: true,
+              options: {
+                method: '2022-blake3-aes-128-gcm',
+                password: generateRandomPassword()
+              },
+              _showAdvanced: true
+            };
+          } else if (protoKey === 'trojan') {
+            newInb = {
+              node_id: inboundsModal.node?.id || 0,
+              tag: 'trojan-in',
+              type: 'trojan',
+              listen_port: port,
+              enabled: true,
+              options: {
+                server_name: 'icloud.com',
+                password: generateRandomPassword()
+              },
+              _showAdvanced: true
+            };
+          } else if (protoKey === 'anytls') {
+            newInb = {
+              node_id: inboundsModal.node?.id || 0,
+              tag: 'anytls-in',
+              type: 'anytls',
+              listen_port: port,
+              enabled: true,
+              options: {
+                server_name: 'icloud.com',
+                password: generateRandomPassword()
+              },
+              _showAdvanced: true
+            };
+          } else if (protoKey === 'vless-ws') {
+            newInb = {
+              node_id: inboundsModal.node?.id || 0,
+              tag: 'vless-ws-in',
+              type: 'vless',
+              listen_port: port,
+              enabled: true,
+              options: {
+                server_name: 'icloud.com',
+                path: '/vless-ws'
+              },
+              _showAdvanced: true
+            };
+          }
+          if (newInb) {
+            inboundsModal.list.push(newInb);
+            addToast(`已添加【${protoKey}】协议入站，记得点击保存生效`);
+          }
+        };
+
+        const removeInbound = (idx) => {
+          if (confirm('确认删除该协议入站吗？')) {
+            inboundsModal.list.splice(idx, 1);
           }
         };
 
@@ -1915,6 +2349,7 @@
           editNodeModal.form.name = node.name;
           editNodeModal.form.address = node.address || '';
           editNodeModal.form.rate = node.rate || 1.0;
+          editNodeModal.form.hidden = !!node.hidden;
           editNodeModal.show = true;
         };
 
@@ -2092,6 +2527,8 @@
           selectedNodeForInstall, openInstallModal, getAdaptedInstallCommand, commandTab, customNatPort, quickCopyCommand,
           showAddUserModal, userForm, createUser, resetUserTraffic, deleteUser,
           selectedUserForSub, openSubModal, getSubURL,
+          allProtocols, selectAllProtocols, selectTopProtocols, toggleNodeHidden,
+          regenerateRealityKeys, addNewInbound, removeInbound,
           qrModal, openQr,
           showPassModal, passForm, changePassword,
           showSafeModal, safeEntrance, safePathInput, saveSafeEntrance,
