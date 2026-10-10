@@ -232,42 +232,11 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 			continue
 		}
 
-		switch in.Type {
-		case "vless":
-			pubKey, _ := in.Options["public_key"].(string)
-			shortID, _ := in.Options["short_id"].(string)
-			serverName, _ := in.Options["server_name"].(string)
-			if serverName == "" {
-				serverName = "gateway.icloud.com"
-			}
-			link := fmt.Sprintf("vless://%s@%s:%d?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#%s",
-				userUUID, node.Address, in.ListenPort, serverName, pubKey, shortID, fmt.Sprintf("%s-Reality", node.Name))
-			links = append(links, ProtocolShareLink{
-				Protocol:    "vless-reality",
-				Name:        fmt.Sprintf("%s (VLESS Reality)", node.Name),
-				Port:        in.ListenPort,
-				PortType:    "TCP",
-				Link:        link,
-				Description: "主流防封 Reality 伪装，基于 Vision 流控，原生 443 伪装",
-			})
+		isGRPC := in.Type == "grpc-reality" || (in.Type == "vless" && (strings.Contains(in.Tag, "grpc") || in.Options["service_name"] != nil))
+		isWS := in.Type == "vless-ws" || (in.Type == "vless" && (strings.Contains(in.Tag, "ws") || in.Options["path"] != nil))
 
-		case "hysteria2":
-			serverName, _ := in.Options["server_name"].(string)
-			if serverName == "" {
-				serverName = node.Address
-			}
-			link := fmt.Sprintf("hysteria2://%s@%s:%d?insecure=1&sni=%s#%s",
-				userUUID, node.Address, in.ListenPort, serverName, fmt.Sprintf("%s-Hy2", node.Name))
-			links = append(links, ProtocolShareLink{
-				Protocol:    "hysteria2",
-				Name:        fmt.Sprintf("%s (Hysteria 2)", node.Name),
-				Port:        in.ListenPort,
-				PortType:    "UDP",
-				Link:        link,
-				Description: "基于 UDP QUIC 的暴力多路复用加速协议，恶劣网络下极速高带宽",
-			})
-
-		case "grpc-reality":
+		switch {
+		case isGRPC:
 			pubKey, _ := in.Options["public_key"].(string)
 			shortID, _ := in.Options["short_id"].(string)
 			serverName, _ := in.Options["server_name"].(string)
@@ -289,55 +258,7 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 				Description: "基于 gRPC 传输的 Reality 节点，穿透性强，适配 CDN 与负载均衡",
 			})
 
-		case "tuic":
-			link := fmt.Sprintf("tuic://%s:%s@%s:%d?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#%s",
-				userUUID, userUUID, node.Address, in.ListenPort, fmt.Sprintf("%s-TUIC", node.Name))
-			links = append(links, ProtocolShareLink{
-				Protocol:    "tuic",
-				Name:        fmt.Sprintf("%s (TUIC v5)", node.Name),
-				Port:        in.ListenPort,
-				PortType:    "UDP",
-				Link:        link,
-				Description: "TUIC v5 自研 QUIC 协议，支持 BBR 拥塞控制与原生 UDP 中继",
-			})
-
-		case "anytls":
-			serverName, _ := in.Options["server_name"].(string)
-			if serverName == "" {
-				serverName = "gateway.icloud.com"
-			}
-			link := fmt.Sprintf("anytls://%s@%s:%d/?sni=%s&insecure=1#%s",
-				userUUID, node.Address, in.ListenPort, serverName, fmt.Sprintf("%s-AnyTLS", node.Name))
-			links = append(links, ProtocolShareLink{
-				Protocol:    "anytls",
-				Name:        fmt.Sprintf("%s (AnyTLS)", node.Name),
-				Port:        in.ListenPort,
-				PortType:    "TCP",
-				Link:        link,
-				Description: "AnyTLS 轻量化 TLS 传输协议",
-			})
-
-		case "shadowsocks":
-			method, _ := in.Options["method"].(string)
-			if method == "" {
-				method = "2022-blake3-aes-128-gcm"
-			}
-			pwd, _ := in.Options["password"].(string)
-			if pwd == "" {
-				pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
-			}
-			userInfo := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", method, pwd)))
-			link := fmt.Sprintf("ss://%s@%s:%d#%s", userInfo, node.Address, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-Shadowsocks", node.Name)))
-			links = append(links, ProtocolShareLink{
-				Protocol:    "shadowsocks",
-				Name:        fmt.Sprintf("%s (Shadowsocks)", node.Name),
-				Port:        in.ListenPort,
-				PortType:    "TCP",
-				Link:        link,
-				Description: fmt.Sprintf("经典抗封锁协议 (%s)，兼容原版 SS 与小火箭", method),
-			})
-
-		case "vless-ws":
+		case isWS:
 			serverName, _ := in.Options["server_name"].(string)
 			if serverName == "" {
 				serverName = node.Address
@@ -357,7 +278,89 @@ func GenerateNodeShareLinks(node *model.Node, userUUID, username string) []Proto
 				Description: "基于 WebSocket + TLS 的传输协议，兼容 CDN 节点代理与反代加速",
 			})
 
-		case "trojan":
+		case in.Type == "vless":
+			pubKey, _ := in.Options["public_key"].(string)
+			shortID, _ := in.Options["short_id"].(string)
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = "gateway.icloud.com"
+			}
+			link := fmt.Sprintf("vless://%s@%s:%d?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#%s",
+				userUUID, node.Address, in.ListenPort, serverName, pubKey, shortID, fmt.Sprintf("%s-Reality", node.Name))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "vless-reality",
+				Name:        fmt.Sprintf("%s (VLESS Reality)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: "主流防封 Reality 伪装，基于 Vision 流控，原生 443 伪装",
+			})
+
+		case in.Type == "hysteria2":
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = node.Address
+			}
+			link := fmt.Sprintf("hysteria2://%s@%s:%d/?sni=%s&insecure=1#%s",
+				userUUID, node.Address, in.ListenPort, serverName, url.QueryEscape(fmt.Sprintf("%s-Hy2", node.Name)))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "hysteria2",
+				Name:        fmt.Sprintf("%s (Hysteria 2)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "UDP",
+				Link:        link,
+				Description: "基于 UDP 协议自研拥塞控制算法，极速抗封锁与低延迟",
+			})
+
+		case in.Type == "tuic":
+			link := fmt.Sprintf("tuic://%s:%s@%s:%d?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#%s",
+				userUUID, userUUID, node.Address, in.ListenPort, fmt.Sprintf("%s-TUIC", node.Name))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "tuic",
+				Name:        fmt.Sprintf("%s (TUIC v5)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "UDP",
+				Link:        link,
+				Description: "TUIC v5 自研 QUIC 协议，支持 BBR 拥塞控制与原生 UDP 中继",
+			})
+
+		case in.Type == "anytls":
+			serverName, _ := in.Options["server_name"].(string)
+			if serverName == "" {
+				serverName = "gateway.icloud.com"
+			}
+			link := fmt.Sprintf("anytls://%s@%s:%d/?sni=%s&insecure=1#%s",
+				userUUID, node.Address, in.ListenPort, serverName, fmt.Sprintf("%s-AnyTLS", node.Name))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "anytls",
+				Name:        fmt.Sprintf("%s (AnyTLS)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: "AnyTLS 轻量化 TLS 传输协议",
+			})
+
+		case in.Type == "shadowsocks":
+			method, _ := in.Options["method"].(string)
+			if method == "" {
+				method = "2022-blake3-aes-128-gcm"
+			}
+			pwd, _ := in.Options["password"].(string)
+			if pwd == "" {
+				pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
+			}
+			userInfo := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", method, pwd)))
+			link := fmt.Sprintf("ss://%s@%s:%d#%s", userInfo, node.Address, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-Shadowsocks", node.Name)))
+			links = append(links, ProtocolShareLink{
+				Protocol:    "shadowsocks",
+				Name:        fmt.Sprintf("%s (Shadowsocks)", node.Name),
+				Port:        in.ListenPort,
+				PortType:    "TCP",
+				Link:        link,
+				Description: fmt.Sprintf("经典抗封锁协议 (%s)，兼容原版 SS 与小火箭", method),
+			})
+
+		case in.Type == "trojan":
 			serverName, _ := in.Options["server_name"].(string)
 			if serverName == "" {
 				serverName = node.Address

@@ -27,6 +27,9 @@ import (
 func resolveNodeAddress(n *model.Node, c *gin.Context) string {
 	addr := strings.TrimSpace(n.Address)
 	if addr == "" || addr == "自动探测" || addr == "127.0.0.1" || addr == "localhost" {
+		if d := model.GetSetting("master_domain", ""); d != "" {
+			return d
+		}
 		return ""
 	}
 	return addr
@@ -58,11 +61,6 @@ func uniqueName(used map[string]int, base string) string {
 }
 
 // resolveInbounds 解析节点入站配置 (纯读)。
-//
-// 历史实现在这里是"空则生成新 x25519 密钥并 UPDATE 落库": 订阅是免鉴权的 GET,
-// 并发请求会各自生成不同密钥互相覆盖, 先响应出去的订阅里的 pbk 永远对不上节点实际密钥,
-// 该用户就再也握手不上了 (同时任何持令牌者都能反复覆盖节点密钥)。
-// 现在入站在建节点时一次性生成 (含启动时的历史数据补齐), 订阅侧只读。
 func resolveInbounds(n *model.Node) []common.InboundConfig {
 	var inbounds []common.InboundConfig
 	if err := json.Unmarshal([]byte(n.InboundsJSON), &inbounds); err != nil {
@@ -72,21 +70,29 @@ func resolveInbounds(n *model.Node) []common.InboundConfig {
 }
 
 // protoMatches 判断协议是否匹配用户筛选条件 (支持 ?proto=hy2 或 ?proto=reality 等)
-func protoMatches(inType, filter string) bool {
+func protoMatches(in common.InboundConfig, filter string) bool {
 	if filter == "" || filter == "all" {
 		return true
 	}
-	inType = strings.ToLower(inType)
 	filter = strings.ToLower(filter)
+	inType := strings.ToLower(in.Type)
+	tag := strings.ToLower(in.Tag)
+	isGRPC := inType == "grpc-reality" || (inType == "vless" && (strings.Contains(tag, "grpc") || in.Options["service_name"] != nil))
+	isWS := inType == "vless-ws" || (inType == "vless" && (strings.Contains(tag, "ws") || in.Options["path"] != nil))
+
 	switch filter {
-	case "reality", "vless":
-		return inType == "vless" || inType == "grpc-reality" || inType == "vless-ws"
+	case "reality":
+		return (inType == "vless" && !isWS) || isGRPC
+	case "grpc":
+		return isGRPC
+	case "ws", "vless-ws":
+		return isWS
+	case "vless":
+		return inType == "vless"
 	case "hy2", "hysteria2", "hysteria":
 		return inType == "hysteria2"
 	case "tuic":
 		return inType == "tuic"
-	case "grpc":
-		return inType == "grpc-reality"
 	case "ss", "shadowsocks":
 		return inType == "shadowsocks"
 	case "trojan":
@@ -94,7 +100,7 @@ func protoMatches(inType, filter string) bool {
 	case "anytls":
 		return inType == "anytls"
 	default:
-		return strings.Contains(inType, filter)
+		return strings.Contains(inType, filter) || strings.Contains(tag, filter)
 	}
 }
 
@@ -173,33 +179,15 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 		}
 
 		for _, in := range inbounds {
-			if !in.Enabled || !protoMatches(in.Type, protoFilter) {
+			if !in.Enabled || !protoMatches(in, protoFilter) {
 				continue
 			}
 
-			switch in.Type {
-			case "vless":
-				pubKey, _ := in.Options["public_key"].(string)
-				shortID, _ := in.Options["short_id"].(string)
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = "gateway.icloud.com"
-				}
+			isGRPC := in.Type == "grpc-reality" || (in.Type == "vless" && (strings.Contains(in.Tag, "grpc") || in.Options["service_name"] != nil))
+			isWS := in.Type == "vless-ws" || (in.Type == "vless" && (strings.Contains(in.Tag, "ws") || in.Options["path"] != nil))
 
-				params := url.Values{}
-				params.Set("security", "reality")
-				params.Set("sni", serverName)
-				params.Set("pbk", normalizeRealityKey(pubKey))
-				params.Set("sid", shortID)
-				params.Set("type", "tcp")
-				params.Set("flow", "xtls-rprx-vision")
-				params.Set("encryption", "none")
-
-				link := fmt.Sprintf("vless://%s@%s:%d?%s#%s",
-					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Reality", n.Name)))
-				links = append(links, link)
-
-			case "grpc-reality":
+			switch {
+			case isGRPC:
 				pubKey, _ := in.Options["public_key"].(string)
 				shortID, _ := in.Options["short_id"].(string)
 				serverName, _ := in.Options["server_name"].(string)
@@ -224,47 +212,7 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-gRPC-Reality", n.Name)))
 				links = append(links, link)
 
-			case "hysteria2":
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = nodeAddr
-				}
-				params := url.Values{}
-				params.Set("insecure", "1")
-				params.Set("sni", serverName)
-
-				link := fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s",
-					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Hy2", n.Name)))
-				links = append(links, link)
-
-			case "tuic":
-				link := fmt.Sprintf("tuic://%s:%s@%s:%d?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#%s",
-					user.UUID, user.UUID, nodeAddr, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-TUIC", n.Name)))
-				links = append(links, link)
-
-			case "anytls":
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = "gateway.icloud.com"
-				}
-				link := fmt.Sprintf("anytls://%s@%s:%d/?sni=%s&insecure=1#%s",
-					user.UUID, nodeAddr, in.ListenPort, serverName, url.QueryEscape(fmt.Sprintf("%s-AnyTLS", n.Name)))
-				links = append(links, link)
-
-			case "shadowsocks":
-				method, _ := in.Options["method"].(string)
-				if method == "" {
-					method = "2022-blake3-aes-128-gcm"
-				}
-				pwd, _ := in.Options["password"].(string)
-				if pwd == "" {
-					pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
-				}
-				userInfo := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", method, pwd)))
-				link := fmt.Sprintf("ss://%s@%s:%d#%s", userInfo, nodeAddr, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-Shadowsocks", n.Name)))
-				links = append(links, link)
-
-			case "vless-ws":
+			case isWS:
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
 					serverName = nodeAddr
@@ -277,7 +225,68 @@ func generateBase64Links(c *gin.Context, user *model.User, nodes []model.Node) {
 					user.UUID, nodeAddr, in.ListenPort, serverName, url.QueryEscape(wsPath), url.QueryEscape(fmt.Sprintf("%s-VLESS-WS", n.Name)))
 				links = append(links, link)
 
-			case "trojan":
+			case in.Type == "vless":
+				pubKey, _ := in.Options["public_key"].(string)
+				shortID, _ := in.Options["short_id"].(string)
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = "gateway.icloud.com"
+				}
+
+				params := url.Values{}
+				params.Set("security", "reality")
+				params.Set("sni", serverName)
+				params.Set("pbk", normalizeRealityKey(pubKey))
+				params.Set("sid", shortID)
+				params.Set("type", "tcp")
+				params.Set("flow", "xtls-rprx-vision")
+				params.Set("encryption", "none")
+
+				link := fmt.Sprintf("vless://%s@%s:%d?%s#%s",
+					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Reality", n.Name)))
+				links = append(links, link)
+
+			case in.Type == "hysteria2":
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = nodeAddr
+				}
+				params := url.Values{}
+				params.Set("insecure", "1")
+				params.Set("sni", serverName)
+
+				link := fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s",
+					user.UUID, nodeAddr, in.ListenPort, params.Encode(), url.QueryEscape(fmt.Sprintf("%s-Hy2", n.Name)))
+				links = append(links, link)
+
+			case in.Type == "tuic":
+				link := fmt.Sprintf("tuic://%s:%s@%s:%d?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#%s",
+					user.UUID, user.UUID, nodeAddr, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-TUIC", n.Name)))
+				links = append(links, link)
+
+			case in.Type == "anytls":
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = "gateway.icloud.com"
+				}
+				link := fmt.Sprintf("anytls://%s@%s:%d/?sni=%s&insecure=1#%s",
+					user.UUID, nodeAddr, in.ListenPort, serverName, url.QueryEscape(fmt.Sprintf("%s-AnyTLS", n.Name)))
+				links = append(links, link)
+
+			case in.Type == "shadowsocks":
+				method, _ := in.Options["method"].(string)
+				if method == "" {
+					method = "2022-blake3-aes-128-gcm"
+				}
+				pwd, _ := in.Options["password"].(string)
+				if pwd == "" {
+					pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
+				}
+				userInfo := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", method, pwd)))
+				link := fmt.Sprintf("ss://%s@%s:%d#%s", userInfo, nodeAddr, in.ListenPort, url.QueryEscape(fmt.Sprintf("%s-Shadowsocks", n.Name)))
+				links = append(links, link)
+
+			case in.Type == "trojan":
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
 					serverName = nodeAddr
@@ -313,41 +322,15 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 		}
 
 		for _, in := range inbounds {
-			if !in.Enabled || !protoMatches(in.Type, protoFilter) {
+			if !in.Enabled || !protoMatches(in, protoFilter) {
 				continue
 			}
 
-			switch in.Type {
-			case "vless":
-				name := uniqueName(usedNames, fmt.Sprintf("%s-Reality", n.Name))
-				pubKey, _ := in.Options["public_key"].(string)
-				shortID, _ := in.Options["short_id"].(string)
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = "gateway.icloud.com"
-				}
+			isGRPC := in.Type == "grpc-reality" || (in.Type == "vless" && (strings.Contains(in.Tag, "grpc") || in.Options["service_name"] != nil))
+			isWS := in.Type == "vless-ws" || (in.Type == "vless" && (strings.Contains(in.Tag, "ws") || in.Options["path"] != nil))
 
-				p := map[string]any{
-					"name":       name,
-					"type":       "vless",
-					"server":     nodeAddr,
-					"port":       in.ListenPort,
-					"uuid":       user.UUID,
-					"network":    "tcp",
-					"tls":        true,
-					"udp":        true,
-					"flow":       "xtls-rprx-vision",
-					"servername": serverName,
-					"reality-opts": map[string]any{
-						"public-key": normalizeRealityKey(pubKey),
-						"short-id":   shortID,
-					},
-					"client-fingerprint": "chrome",
-				}
-				proxies = append(proxies, p)
-				proxyNames = append(proxyNames, name)
-
-			case "grpc-reality":
+			switch {
+			case isGRPC:
 				name := uniqueName(usedNames, fmt.Sprintf("%s-gRPC-Reality", n.Name))
 				pubKey, _ := in.Options["public_key"].(string)
 				shortID, _ := in.Options["short_id"].(string)
@@ -382,64 +365,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxies = append(proxies, p)
 				proxyNames = append(proxyNames, name)
 
-			case "hysteria2":
-				name := uniqueName(usedNames, fmt.Sprintf("%s-Hy2", n.Name))
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = nodeAddr
-				}
-
-				p := map[string]any{
-					"name":             name,
-					"type":             "hysteria2",
-					"server":           nodeAddr,
-					"port":             in.ListenPort,
-					"password":         user.UUID,
-					"sni":              serverName,
-					"skip-cert-verify": true,
-				}
-				proxies = append(proxies, p)
-				proxyNames = append(proxyNames, name)
-
-			case "tuic":
-				name := uniqueName(usedNames, fmt.Sprintf("%s-TUIC", n.Name))
-				p := map[string]any{
-					"name":                  name,
-					"type":                  "tuic",
-					"server":                nodeAddr,
-					"port":                  in.ListenPort,
-					"uuid":                  user.UUID,
-					"password":              user.UUID,
-					"alpn":                  []string{"h3"},
-					"congestion-controller": "bbr",
-					"skip-cert-verify":      true,
-				}
-				proxies = append(proxies, p)
-				proxyNames = append(proxyNames, name)
-
-			case "shadowsocks":
-				name := uniqueName(usedNames, fmt.Sprintf("%s-Shadowsocks", n.Name))
-				method, _ := in.Options["method"].(string)
-				if method == "" {
-					method = "2022-blake3-aes-128-gcm"
-				}
-				pwd, _ := in.Options["password"].(string)
-				if pwd == "" {
-					pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
-				}
-				p := map[string]any{
-					"name":     name,
-					"type":     "ss",
-					"server":   nodeAddr,
-					"port":     in.ListenPort,
-					"cipher":   method,
-					"password": pwd,
-					"udp":      true,
-				}
-				proxies = append(proxies, p)
-				proxyNames = append(proxyNames, name)
-
-			case "vless-ws":
+			case isWS:
 				name := uniqueName(usedNames, fmt.Sprintf("%s-VLESS-WS", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
@@ -467,7 +393,91 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxies = append(proxies, p)
 				proxyNames = append(proxyNames, name)
 
-			case "trojan":
+			case in.Type == "vless":
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Reality", n.Name))
+				pubKey, _ := in.Options["public_key"].(string)
+				shortID, _ := in.Options["short_id"].(string)
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = "gateway.icloud.com"
+				}
+
+				p := map[string]any{
+					"name":       name,
+					"type":       "vless",
+					"server":     nodeAddr,
+					"port":       in.ListenPort,
+					"uuid":       user.UUID,
+					"network":    "tcp",
+					"tls":        true,
+					"udp":        true,
+					"flow":       "xtls-rprx-vision",
+					"servername": serverName,
+					"reality-opts": map[string]any{
+						"public-key": normalizeRealityKey(pubKey),
+						"short-id":   shortID,
+					},
+					"client-fingerprint": "chrome",
+				}
+				proxies = append(proxies, p)
+			case in.Type == "hysteria2":
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Hy2", n.Name))
+				serverName, _ := in.Options["server_name"].(string)
+				if serverName == "" {
+					serverName = nodeAddr
+				}
+
+				p := map[string]any{
+					"name":             name,
+					"type":             "hysteria2",
+					"server":           nodeAddr,
+					"port":             in.ListenPort,
+					"password":         user.UUID,
+					"sni":              serverName,
+					"skip-cert-verify": true,
+				}
+				proxies = append(proxies, p)
+				proxyNames = append(proxyNames, name)
+
+			case in.Type == "tuic":
+				name := uniqueName(usedNames, fmt.Sprintf("%s-TUIC", n.Name))
+				p := map[string]any{
+					"name":                  name,
+					"type":                  "tuic",
+					"server":                nodeAddr,
+					"port":                  in.ListenPort,
+					"uuid":                  user.UUID,
+					"password":              user.UUID,
+					"alpn":                  []string{"h3"},
+					"congestion-controller": "bbr",
+					"skip-cert-verify":      true,
+				}
+				proxies = append(proxies, p)
+				proxyNames = append(proxyNames, name)
+
+			case in.Type == "shadowsocks":
+				name := uniqueName(usedNames, fmt.Sprintf("%s-Shadowsocks", n.Name))
+				method, _ := in.Options["method"].(string)
+				if method == "" {
+					method = "2022-blake3-aes-128-gcm"
+				}
+				pwd, _ := in.Options["password"].(string)
+				if pwd == "" {
+					pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
+				}
+				p := map[string]any{
+					"name":     name,
+					"type":     "ss",
+					"server":   nodeAddr,
+					"port":     in.ListenPort,
+					"cipher":   method,
+					"password": pwd,
+					"udp":      true,
+				}
+				proxies = append(proxies, p)
+				proxyNames = append(proxyNames, name)
+
+			case in.Type == "trojan":
 				name := uniqueName(usedNames, fmt.Sprintf("%s-Trojan", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
@@ -486,7 +496,7 @@ func generateClashYAML(c *gin.Context, user *model.User, nodes []model.Node) {
 				proxies = append(proxies, p)
 				proxyNames = append(proxyNames, name)
 
-			case "anytls":
+			case in.Type == "anytls":
 				name := uniqueName(usedNames, fmt.Sprintf("%s-AnyTLS", n.Name))
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
@@ -573,45 +583,14 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 		}
 
 		for _, in := range inbounds {
-			if !in.Enabled || !protoMatches(in.Type, protoFilter) {
+			if !in.Enabled || !protoMatches(in, protoFilter) {
 				continue
 			}
 
-			switch in.Type {
-			case "vless":
-				tag := fmt.Sprintf("%s-Reality", n.Name)
-				pubKey, _ := in.Options["public_key"].(string)
-				shortID, _ := in.Options["short_id"].(string)
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = "gateway.icloud.com"
-				}
+			isGRPC := strings.Contains(strings.ToLower(in.Tag), "grpc") || strings.EqualFold(in.Type, "grpc-reality") || strings.EqualFold(fmt.Sprint(in.Options["transport"]), "grpc")
+			isWS := strings.Contains(strings.ToLower(in.Tag), "ws") || strings.EqualFold(in.Type, "vless-ws") || strings.EqualFold(fmt.Sprint(in.Options["transport"]), "ws")
 
-				out := map[string]any{
-					"type":        "vless",
-					"tag":         tag,
-					"server":      nodeAddr,
-					"server_port": in.ListenPort,
-					"uuid":        user.UUID,
-					"flow":        "xtls-rprx-vision",
-					"tls": map[string]any{
-						"enabled":     true,
-						"server_name": serverName,
-						"reality": map[string]any{
-							"enabled":    true,
-							"public_key": normalizeRealityKey(pubKey),
-							"short_id":   shortID,
-						},
-						"utls": map[string]any{
-							"enabled":     true,
-							"fingerprint": "chrome",
-						},
-					},
-				}
-				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
-
-			case "grpc-reality":
+			if (in.Type == "vless" || in.Type == "grpc-reality") && isGRPC {
 				tag := fmt.Sprintf("%s-gRPC-Reality", n.Name)
 				pubKey, _ := in.Options["public_key"].(string)
 				shortID, _ := in.Options["short_id"].(string)
@@ -651,90 +630,7 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				outbounds = append(outbounds, out)
 				outTags = append(outTags, tag)
 
-			case "hysteria2":
-				tag := fmt.Sprintf("%s-Hy2", n.Name)
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = nodeAddr
-				}
-
-				out := map[string]any{
-					"type":        "hysteria2",
-					"tag":         tag,
-					"server":      nodeAddr,
-					"server_port": in.ListenPort,
-					"password":    user.UUID,
-					"tls": map[string]any{
-						"enabled":     true,
-						"server_name": serverName,
-						"insecure":    true,
-					},
-				}
-				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
-
-			case "tuic":
-				tag := fmt.Sprintf("%s-TUIC", n.Name)
-				out := map[string]any{
-					"type":               "tuic",
-					"tag":                tag,
-					"server":             nodeAddr,
-					"server_port":        in.ListenPort,
-					"uuid":               user.UUID,
-					"password":           user.UUID,
-					"congestion_control": "bbr",
-					"tls": map[string]any{
-						"enabled":  true,
-						"alpn":     []string{"h3"},
-						"insecure": true,
-					},
-				}
-				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
-
-			case "anytls":
-				tag := fmt.Sprintf("%s-AnyTLS", n.Name)
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = "gateway.icloud.com"
-				}
-				out := map[string]any{
-					"type":        "anytls",
-					"tag":         tag,
-					"server":      nodeAddr,
-					"server_port": in.ListenPort,
-					"password":    user.UUID,
-					"tls": map[string]any{
-						"enabled":     true,
-						"server_name": serverName,
-						"insecure":    true,
-					},
-				}
-				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
-
-			case "shadowsocks":
-				tag := fmt.Sprintf("%s-Shadowsocks", n.Name)
-				method, _ := in.Options["method"].(string)
-				if method == "" {
-					method = "2022-blake3-aes-128-gcm"
-				}
-				pwd, _ := in.Options["password"].(string)
-				if pwd == "" {
-					pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
-				}
-				out := map[string]any{
-					"type":        "shadowsocks",
-					"tag":         tag,
-					"server":      nodeAddr,
-					"server_port": in.ListenPort,
-					"method":      method,
-					"password":    pwd,
-				}
-				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
-
-			case "vless-ws":
+			} else if (in.Type == "vless" || in.Type == "vless-ws") && isWS {
 				tag := fmt.Sprintf("%s-VLESS-WS", n.Name)
 				serverName, _ := in.Options["server_name"].(string)
 				if serverName == "" {
@@ -763,26 +659,145 @@ func generateSingboxJSON(c *gin.Context, user *model.User, nodes []model.Node) {
 				outbounds = append(outbounds, out)
 				outTags = append(outTags, tag)
 
-			case "trojan":
-				tag := fmt.Sprintf("%s-Trojan", n.Name)
-				serverName, _ := in.Options["server_name"].(string)
-				if serverName == "" {
-					serverName = nodeAddr
+			} else {
+				switch in.Type {
+				case "vless":
+					tag := fmt.Sprintf("%s-Reality", n.Name)
+					pubKey, _ := in.Options["public_key"].(string)
+					shortID, _ := in.Options["short_id"].(string)
+					serverName, _ := in.Options["server_name"].(string)
+					if serverName == "" {
+						serverName = "gateway.icloud.com"
+					}
+
+					out := map[string]any{
+						"type":        "vless",
+						"tag":         tag,
+						"server":      nodeAddr,
+						"server_port": in.ListenPort,
+						"uuid":        user.UUID,
+						"flow":        "xtls-rprx-vision",
+						"tls": map[string]any{
+							"enabled":     true,
+							"server_name": serverName,
+							"reality": map[string]any{
+								"enabled":    true,
+								"public_key": normalizeRealityKey(pubKey),
+								"short_id":   shortID,
+							},
+							"utls": map[string]any{
+								"enabled":     true,
+								"fingerprint": "chrome",
+							},
+						},
+					}
+					outbounds = append(outbounds, out)
+					outTags = append(outTags, tag)
+
+				case "hysteria2":
+					tag := fmt.Sprintf("%s-Hy2", n.Name)
+					serverName, _ := in.Options["server_name"].(string)
+					if serverName == "" {
+						serverName = nodeAddr
+					}
+
+					out := map[string]any{
+						"type":        "hysteria2",
+						"tag":         tag,
+						"server":      nodeAddr,
+						"server_port": in.ListenPort,
+						"password":    user.UUID,
+						"tls": map[string]any{
+							"enabled":     true,
+							"server_name": serverName,
+							"insecure":    true,
+						},
+					}
+					outbounds = append(outbounds, out)
+					outTags = append(outTags, tag)
+
+				case "tuic":
+					tag := fmt.Sprintf("%s-TUIC", n.Name)
+					out := map[string]any{
+						"type":               "tuic",
+						"tag":                tag,
+						"server":             nodeAddr,
+						"server_port":        in.ListenPort,
+						"uuid":               user.UUID,
+						"password":           user.UUID,
+						"congestion_control": "bbr",
+						"tls": map[string]any{
+							"enabled":  true,
+							"alpn":     []string{"h3"},
+							"insecure": true,
+						},
+					}
+					outbounds = append(outbounds, out)
+					outTags = append(outTags, tag)
+
+				case "anytls":
+					tag := fmt.Sprintf("%s-AnyTLS", n.Name)
+					serverName, _ := in.Options["server_name"].(string)
+					if serverName == "" {
+						serverName = "gateway.icloud.com"
+					}
+					out := map[string]any{
+						"type":        "anytls",
+						"tag":         tag,
+						"server":      nodeAddr,
+						"server_port": in.ListenPort,
+						"password":    user.UUID,
+						"tls": map[string]any{
+							"enabled":     true,
+							"server_name": serverName,
+							"insecure":    true,
+						},
+					}
+					outbounds = append(outbounds, out)
+					outTags = append(outTags, tag)
+
+				case "shadowsocks":
+					tag := fmt.Sprintf("%s-Shadowsocks", n.Name)
+					method, _ := in.Options["method"].(string)
+					if method == "" {
+						method = "2022-blake3-aes-128-gcm"
+					}
+					pwd, _ := in.Options["password"].(string)
+					if pwd == "" {
+						pwd = "d29ya3YxMjM0NTY3ODkwMQ=="
+					}
+					out := map[string]any{
+						"type":        "shadowsocks",
+						"tag":         tag,
+						"server":      nodeAddr,
+						"server_port": in.ListenPort,
+						"method":      method,
+						"password":    pwd,
+					}
+					outbounds = append(outbounds, out)
+					outTags = append(outTags, tag)
+
+				case "trojan":
+					tag := fmt.Sprintf("%s-Trojan", n.Name)
+					serverName, _ := in.Options["server_name"].(string)
+					if serverName == "" {
+						serverName = nodeAddr
+					}
+					out := map[string]any{
+						"type":        "trojan",
+						"tag":         tag,
+						"server":      nodeAddr,
+						"server_port": in.ListenPort,
+						"password":    user.UUID,
+						"tls": map[string]any{
+							"enabled":     true,
+							"server_name": serverName,
+							"insecure":    true,
+						},
+					}
+					outbounds = append(outbounds, out)
+					outTags = append(outTags, tag)
 				}
-				out := map[string]any{
-					"type":        "trojan",
-					"tag":         tag,
-					"server":      nodeAddr,
-					"server_port": in.ListenPort,
-					"password":    user.UUID,
-					"tls": map[string]any{
-						"enabled":     true,
-						"server_name": serverName,
-						"insecure":    true,
-					},
-				}
-				outbounds = append(outbounds, out)
-				outTags = append(outTags, tag)
 			}
 		}
 	}

